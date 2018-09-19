@@ -31,8 +31,6 @@
 #include <hal_init.h>
 #include <hpl_adc_base.h>
 
-#define FORCE_CARD_TO_BE_VIBRATEK
-
 /* external function list */
 extern int							I2C_configMONITOREDINPUTS(uint8_t,  uint8_t, unsigned char);
 extern int							I2C_readMONITOREDINPUT(uint8_t,  uint8_t, unsigned char *, unsigned char *);
@@ -276,19 +274,17 @@ void read_boardvalues(void)
 	/* Detect change of status of Slot [A] daughter-card */
 	if ((!cardA_old) && (cardA_present)) {
 		/* Read the I2C device address on the card to establish type of card */
-#ifdef FORCE_CARD_TO_BE_VIBRATEK
-			cardA_type = CARD_VIBRATEK;
-#else	
+	
 		if (!(err = I2C_check_deviceID(PC27_CARDA_I2C_SDA, PC28_CARDA_I2C_CLK, 0x60))) {
 			cardA_type = CARD_VIBRATEK;
 		} else if (!(err = I2C_check_deviceID(PC27_CARDA_I2C_SDA, PC28_CARDA_I2C_CLK, 0x50))) {
 			cardA_type = CARD_PE;
-		else if ((!(err = I2C_check_deviceID(PC27_CARDA_I2C_SDA, PC28_CARDA_I2C_CLK, 0x41))) && (!(err = I2C_check_deviceID(PC27_CARDA_I2C_SDA, PC28_CARDA_I2C_CLK, 0x68))) {
+		} else if ((!(err = I2C_check_deviceID(PC27_CARDA_I2C_SDA, PC28_CARDA_I2C_CLK, 0x41))) && (!(err = I2C_check_deviceID(PC27_CARDA_I2C_SDA, PC28_CARDA_I2C_CLK, 0x68)))) {
 			cardA_type = CARD_MINI_IO;
 		} else {
 			cardA_type = CARD_NOTFITTED;
 		}
-#endif	
+
 		if (err < 0) {
 			xprintf("Could not read I2C bus on CARDA for I2C_check_deviceID() [%i]\r\n", err);
 		}
@@ -336,7 +332,7 @@ void read_boardvalues(void)
 			xprintf("CARDA is a Power & Ethernet Daughter-Card\r\n");
 			break;
 		}
-		} else if (!cardA_present) {
+	} else if (!cardA_present) {
 		cardA_type = CARD_NOTFITTED;
 		
 		if (cardA_old) {
@@ -353,17 +349,14 @@ void read_boardvalues(void)
 	/* Detect change of status of Slot [B] daughter-card */
 	if ((!cardB_old) && (cardB_present)) {
 		/* Read the I2C device address on the card to establish type of card */
-#ifdef FORCE_CARD_TO_BE_VIBRATEK
-		cardB_type = CARD_VIBRATEK;
-#else		
+		
 		if (!(err = I2C_check_deviceID(PB24_CARDB_I2C_SDA, PB25_CARDB_I2C_CLK, 0x60))) {
 			cardB_type = CARD_VIBRATEK;
-		} else if ((!(err = I2C_check_deviceID(PB24_CARDB_I2C_SDA, PB25_CARDB_I2C_CLK, 0x41))) && (!(err = I2C_check_deviceID(PB24_CARDB_I2C_SDA, PB25_CARDB_I2C_CLK, 0x68))) {
+		} else if ((!(err = I2C_check_deviceID(PB24_CARDB_I2C_SDA, PB25_CARDB_I2C_CLK, 0x41))) && (!(err = I2C_check_deviceID(PB24_CARDB_I2C_SDA, PB25_CARDB_I2C_CLK, 0x68)))) {
 			cardB_type = CARD_MINI_IO;		
 		} else {
 			cardB_type = CARD_NOTFITTED;
 		}
-#endif
 		
 		if (err < 0) {
 			xprintf("Could not read I2C bus on CARDB for I2C_check_deviceID() [%i]\r\n", err);
