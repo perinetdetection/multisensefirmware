@@ -132,6 +132,9 @@ extern "C" {
 #define PC12_GPIO5					GPIO(GPIO_PORTC, 12)
 #define PC27_CARDA_I2C_SDA			GPIO(GPIO_PORTC, 27)
 #define PC28_CARDA_I2C_CLK			GPIO(GPIO_PORTC, 28)
+#define PB12_SPI_MOSI				GPIO(GPIO_PORTB, 12)
+#define PB13_SPI_MISO				GPIO(GPIO_PORTB, 13)
+#define PB15_SPI_CLK				GPIO(GPIO_PORTB, 15)
 
 /* Global definitions for the firmware environment */
 #define REG_SPI_READ				0x20

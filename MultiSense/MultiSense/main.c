@@ -71,11 +71,10 @@ extern void							var_init(void);
 extern void							ADC_init(void);
 extern void							read_boardvalues(void);
 
-struct io_descriptor			   *spio;
 struct timer_task					TIMER_0_task1;
 
 unsigned int						tick_counter;
-unsigned char						readenvironment, arp_check, ip_periodic_check, sentA, sentB, reboot_actioned, refresh_gain;
+unsigned char						readenvironment, arp_check, ip_periodic_check, sentA, sentB, refresh_gain;
 unsigned char						send_relearn_udp;
 unsigned char						ring_timer;
 unsigned char		 				stormstate;
@@ -92,13 +91,12 @@ unsigned char						cardBch2_samplebuffer;
 unsigned char						cardBch3_samplebuffer;
 unsigned int						card_sampleindex, looprate, loopcount;
 
-unsigned char						settings_buffer[SETTING_STRUCTURE_SIZE], readdata_tempmoisture[4], readdata_water1, readdata_water2, highvoltage, command_dataw[8], command_datar[8];
+unsigned char						settings_buffer[SETTING_STRUCTURE_SIZE], readdata_tempmoisture[4], readdata_water1, readdata_water2, highvoltage, command_dataw[2], command_datar[2];
 unsigned char						tamper, cardA_present, cardB_present, cardA_old, cardB_old, good_ethernet, link_port1, link_port2, link_port3, ring_broken, miniA_chan, miniB_chan;
 unsigned char						miniIO_A1_adcH, miniIO_A1_adcL, miniIO_A0_adcH, miniIO_A0_adcL, miniIO_A_relay, miniIO_A_inputs;
 unsigned char						miniIO_B1_adcH, miniIO_B1_adcL, miniIO_B0_adcH, miniIO_B0_adcL, miniIO_B_relay, miniIO_B_inputs;
 unsigned char						old_tamper, old_link_port1, old_link_port2, old_link_port3;
 CARD_TYPE							cardA_type, cardB_type;
-struct spi_xfer						p_xfer;
 struct uip_eth_addr					macaddress;
 uint8_t								mac_raw[6];
 uip_ipaddr_t						ipaddr, netmask, gwaddr, broadcast;
@@ -115,6 +113,31 @@ volatile uint32_t					inputctrl_buff[1] = {0x0003};
 uint8_t								aes_key[16] = {0x2B, 0x7E, 0x15, 0x16, 0x28, 0xAE, 0xD2, 0xA6, 0xAB, 0xF7, 0x15, 0x88, 0x09, 0xCF, 0x4F, 0x3C};
 
 // *****************************************************************************************************************************************************************
+// Function:    bash_spi_transfer(unsigned char *tx, unsigned char *rx, int size)
+// . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+// Description: rolls round the push-pull MOSI/MISO of the SPI bus for [size] bytes of 8-bits, MSB
+// Returns:     Nothing
+// *****************************************************************************************************************************************************************
+static void inline bash_spi_transfer(unsigned char *tx, unsigned char *rx, int size)
+{
+	int register count, loop;
+	
+	for (count = 0; count < size; count++) {
+		rx[count] = 0;
+		
+		for (loop = 8; loop; loop--) {
+			gpio_set_pin_level(PB12_SPI_MOSI, (tx[count] & (1 << (loop - 1))) ? 1 : 0);
+			gpio_set_pin_level(PB15_SPI_CLK, 0);
+			gpio_set_pin_level(PB15_SPI_CLK, 0);
+			gpio_set_pin_level(PB15_SPI_CLK, 0);
+			gpio_set_pin_level(PB15_SPI_CLK, 1);
+			
+			rx[count] |= (gpio_get_pin_level(PB13_SPI_MISO) << (loop - 1));
+		}
+	}
+}
+
+// *****************************************************************************************************************************************************************
 // Function:    TIMER_0_task1_cb(const struct timer_task *const timer_task)
 // . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
 // Description: When a 100ms timer expires, this callback function is executed. this signifies the 1/10th of a second timer tick
@@ -128,6 +151,9 @@ void TIMER_0_task1_cb(const struct timer_task *const timer_task)
 	/* Every 5/10th of a second, set the readenvironment flag to instigate the board live readings to be take down in the main-loop */
 	if (!(tick_counter % 5)) {
 		readenvironment = 1;
+		
+		/* Kick the watchdog time-out facility */
+	    wdt_feed(&WDT_0);
 	}
 
 	/* Every 1/10th of a second, poll theuIP stack as part of the pre-requisite requirement for the stack */
@@ -165,11 +191,6 @@ void application_udp_appcall(void)
 {
 	u16_t	len;
 
-	/* If we are waiting for a reboot, then exit as we do not want to action any incoming packet frames */
-	if (reboot_actioned) {																							// if the MultiSense node is rebooting, then return
-		return;
-	}
-
 	/* If the uIP stack signals that we have a new UDPmpacket RX, then execute next block of code */
 	if (uip_newdata()) {
 		/* Keep the "good_ethernet" counter topped up */
@@ -186,14 +207,13 @@ void application_udp_appcall(void)
 #else
 			memmove(PLAINTEXT, CIPHERTEXT, len);																	// If no encryption compiled, then just copy over plain-text from [UDP] buffer
 #endif
-			if ((len == 40) && (PLAINTEXT[0] == ID_IDENT_1) && (PLAINTEXT[1] == ID_IDENT_2) && (PLAINTEXT[2] == ID_IDENT_3) && (PLAINTEXT[3] == ID_IDENT_4)) {
+			if ((len == 39) && (PLAINTEXT[0] == ID_IDENT_1) && (PLAINTEXT[1] == ID_IDENT_2) && (PLAINTEXT[2] == ID_IDENT_3) && (PLAINTEXT[3] == ID_IDENT_4)) {
 				/* If this was an [ID_SET] packet... */
 				memmove(((CONFIG *)&settings_buffer)->name, &PLAINTEXT[4], 33);
 
 				/* Move all new settings and ID values into the configuration EEprom overlay */
 				((CONFIG *)&settings_buffer)->gain_cardA = PLAINTEXT[37];
 				((CONFIG *)&settings_buffer)->gain_cardB = PLAINTEXT[38];
-				((CONFIG *)&settings_buffer)->loop_basestation = PLAINTEXT[39];
 
 				/* Then write-back the overlay back into NV ram store */
 				if (EEprom_settings(settings_buffer, SETTING_STRUCTURE_SIZE, 1) != ERR_NONE) {
@@ -526,13 +546,16 @@ int main_loop(void)
 {
 	uint8_t			ch;
 	unsigned char	key;
-	int						err, loop, etherloop, eth_check;
-	unsigned char			bpdu_arrived, broadcast_storm;
+	int				err, loop, etherloop, eth_check, key_check;
+	unsigned char	bpdu_arrived, broadcast_storm;
 
 	/* Zero-off and initialize the local variables here */
 	bpdu_arrived = 0;
 	broadcast_storm = 0;
 	eth_check = 0;
+	key_check = 0;
+	command_dataw[1] = 0x00;
+	command_dataw[2] = 0x00;
 
 	/* This is the forever loop that is the "main-loop" of the whole firmware in MultiSense */
 	while (1) {
@@ -540,8 +563,8 @@ int main_loop(void)
 		bpdu_arrived = 0;
 		loopcount++;
 
-		/* Only every 250 loops do we check for incoming network frames */
-		if (eth_check == 250) {
+		/* Only every 1000 loops do we check for incoming network frames */
+		if (eth_check == 1000) {
 			/* Be prepared to burst read up to 5 frames this check */
 			for (etherloop = 0; etherloop < 5; etherloop++) {
 				/* What is the length of the next incoming Ethernet frame? */
@@ -639,11 +662,6 @@ int main_loop(void)
 			eth_check++;
 		}
 
-		/* If we are rebooting, then do not execute any more of the main loop, juts go back round checking the uIP stack until the watchdog times-out */
-		if (reboot_actioned) {
-			continue;
-		}
-
 		/* If the configuration settings have bee changed, then update the gain ADC settings on the VibraTek cards if they are installed... */
 		if (refresh_gain) {
 			if (cardA_type == CARD_VIBRATEK) {
@@ -670,81 +688,61 @@ int main_loop(void)
 			refresh_gain = 0;
 		}
 
+		/* Sample and read data from SPI VibraTek sampling via SPI ADC */
+		gpio_set_pin_level(PB05_SPInCS_CARDA, 0);
+
+		command_dataw[0] = 0x60 + (ADC_CH0 << 2);
+		bash_spi_transfer(command_dataw, command_datar, 2);
+	
+		gpio_set_pin_level(PB05_SPInCS_CARDA, 1);
+		/* Completed sample and read data from SPI VibraTek sampling via SPI ADC */
+
 		/* If Card A has a VibraTek or VibraPoint installed and the sample buffer is not yet full then... */
 		if (((cardA_type == CARD_VIBRATEK) || (cardA_type == CARD_VIBRAPOINT)) && (card_sampleindex < SAMPLE_BUFFER_SIZE)) {
-			/* Sample and read data from SPI VibraTek sampling via SPI ADC */
-			gpio_set_pin_level(PB05_SPInCS_CARDA, 0);
-
-			command_dataw[0] = 0x30 + (ADC_CH0 << 1);
-			command_dataw[1] = 0x00;
-			command_dataw[2] = 0x00;
-			p_xfer.txbuf = (uint8_t *)&command_dataw;
-			p_xfer.rxbuf = (uint8_t *)&command_datar;
-			p_xfer.size = 3;
-
-			spi_m_sync_transfer(&SPI_0, &p_xfer);
-			gpio_set_pin_level(PB05_SPInCS_CARDA, 1);
-			/* Completed sample and read data from SPI VibraTek sampling via SPI ADC */
-
-			command_datar[2] = 0x80 + ((command_datar[2] >> 1) & 0x7C);
 			cardAch0_samplebuffer[card_sampleindex] = command_datar[1];
+		}
+
+		/* Sample and read data from SPI VibraTek sampling via SPI ADC */
+		gpio_set_pin_level(PB05_SPInCS_CARDA, 0);
+
+		command_dataw[0] = 0x60 + (ADC_CH1 << 2);
+		bash_spi_transfer(command_dataw, command_datar, 2);
+
+		gpio_set_pin_level(PB05_SPInCS_CARDA, 1);
+		/* Completed sample and read data from SPI VibraTek sampling via SPI ADC */
+
+		if (((cardA_type == CARD_VIBRATEK) || (cardA_type == CARD_VIBRAPOINT)) && (card_sampleindex < SAMPLE_BUFFER_SIZE)) {
+			cardAch1_samplebuffer[card_sampleindex] = command_datar[1];
+		}
+
+		if (((cardA_type == CARD_VIBRATEK) || (cardA_type == CARD_VIBRAPOINT)) && (!card_sampleindex)) {
+			/* Sample and read data from SPI VibraTek sampling via SPI ADC */
+			gpio_set_pin_level(PB05_SPInCS_CARDA, 0);
+
+			command_dataw[0] = 0x60 + (ADC_CH2 << 2);
+			bash_spi_transfer(command_dataw, command_datar, 2);
+					
+			gpio_set_pin_level(PB05_SPInCS_CARDA, 1);
+			/* Completed sample and read data from SPI VibraTek sampling via SPI ADC */
+
+			cardAch2_samplebuffer = command_datar[1];
 
 			/* Sample and read data from SPI VibraTek sampling via SPI ADC */
 			gpio_set_pin_level(PB05_SPInCS_CARDA, 0);
 
-			command_dataw[0] = 0x30 + (ADC_CH1 << 1);
-			command_dataw[1] = 0x00;
-			command_dataw[2] = 0x00;
-			p_xfer.txbuf = (uint8_t *)&command_dataw;
-			p_xfer.rxbuf = (uint8_t *)&command_datar;
-			p_xfer.size = 3;
+			command_dataw[0] = 0x60 + (ADC_CH3 << 2);
+			bash_spi_transfer(command_dataw, command_datar, 2);
 
-			spi_m_sync_transfer(&SPI_0, &p_xfer);
 			gpio_set_pin_level(PB05_SPInCS_CARDA, 1);
 			/* Completed sample and read data from SPI VibraTek sampling via SPI ADC */
 
-			command_datar[2] = 0x80 + ((command_datar[2] >> 1) & 0x7C);
-			cardAch1_samplebuffer[card_sampleindex] = command_datar[1];
-
-			if (!card_sampleindex) {
-				/* Sample and read data from SPI VibraTek sampling via SPI ADC */
-				gpio_set_pin_level(PB05_SPInCS_CARDA, 0);
-
-				command_dataw[0] = 0x30 + (ADC_CH2 << 1);
-				command_dataw[1] = 0x00;
-				command_dataw[2] = 0x00;
-				p_xfer.txbuf = (uint8_t *)&command_dataw;
-				p_xfer.rxbuf = (uint8_t *)&command_datar;
-				p_xfer.size = 3;
-
-				spi_m_sync_transfer(&SPI_0, &p_xfer);
-				gpio_set_pin_level(PB05_SPInCS_CARDA, 1);
-				/* Completed sample and read data from SPI VibraTek sampling via SPI ADC */
-
-				command_datar[2] = 0x80 + ((command_datar[2] >> 1) & 0x7C);
-				cardAch2_samplebuffer = command_datar[1];
-
-				/* Sample and read data from SPI VibraTek sampling via SPI ADC */
-				gpio_set_pin_level(PB05_SPInCS_CARDA, 0);
-
-				command_dataw[0] = 0x30 + (ADC_CH3 << 1);
-				command_dataw[1] = 0x00;
-				command_dataw[2] = 0x00;
-				p_xfer.txbuf = (uint8_t *)&command_dataw;
-				p_xfer.rxbuf = (uint8_t *)&command_datar;
-				p_xfer.size = 3;
-
-				spi_m_sync_transfer(&SPI_0, &p_xfer);
-				gpio_set_pin_level(PB05_SPInCS_CARDA, 1);
-				/* Completed sample and read data from SPI VibraTek sampling via SPI ADC */
-
-				command_datar[2] = 0x80 + ((command_datar[2] >> 1) & 0x7C);
-				cardAch3_samplebuffer = command_datar[1];
-			}
+			cardAch3_samplebuffer = command_datar[1];
+		}
+		
 		/* If Card A has a Maxi IO installed then... */
-		} else if (cardA_type == CARD_MAXI_IO)  {
+		if (cardA_type == CARD_MAXI_IO)  {
 			// TODO
-			delay_us(50);
+
 		/* If Card A has a Mini IO installed then... */
 		} else if (cardA_type == CARD_MINI_IO)  {
 			if (miniA_chan) {
@@ -775,87 +773,64 @@ int main_loop(void)
 		/* If Card A has P&E installed then... */
 		} else if (cardA_type == CARD_PE)  {
 		// TODO
-		delay_us(50);
 		/* If Card A has nothing installed then... */
 		} else if (cardA_type == CARD_NOTFITTED)  {
-			delay_us(50);
 		}
+
+		/* Sample and read data from SPI VibraTek sampling via SPI ADC */
+		gpio_set_pin_level(PB06_SPInCS_CARDB, 0);
+
+		command_dataw[0] = 0x60 + (ADC_CH0 << 2);
+		bash_spi_transfer(command_dataw, command_datar, 2);
+				
+		gpio_set_pin_level(PB06_SPInCS_CARDB, 1);
+		/* Completed sample and read data from SPI VibraTek sampling via SPI ADC */
 
 		/* If Card B has a VibraTek or VibraPoint installed and the sample buffer is not yet full then... */
 		if (((cardB_type == CARD_VIBRATEK) || (cardB_type == CARD_VIBRAPOINT)) && (card_sampleindex < SAMPLE_BUFFER_SIZE)) {
-			/* Sample and read data from SPI VibraTek sampling via SPI ADC */
-			gpio_set_pin_level(PB06_SPInCS_CARDB, 0);
-
-			command_dataw[0] = 0x30 + (ADC_CH0 << 1);
-			command_dataw[1] = 0x00;
-			command_dataw[2] = 0x00;
-			p_xfer.txbuf = (uint8_t *)&command_dataw;
-			p_xfer.rxbuf = (uint8_t *)&command_datar;
-			p_xfer.size = 3;
-
-			spi_m_sync_transfer(&SPI_0, &p_xfer);
-			gpio_set_pin_level(PB06_SPInCS_CARDB, 1);
-			/* Completed sample and read data from SPI VibraTek sampling via SPI ADC */
-
-			command_datar[2] = 0x80 + ((command_datar[2] >> 1) & 0x7C);
 			cardBch0_samplebuffer[card_sampleindex] = command_datar[1];
+		}
+
+		/* Sample and read data from SPI VibraTek sampling via SPI ADC */
+		gpio_set_pin_level(PB06_SPInCS_CARDB, 0);
+
+		command_dataw[0] = 0x60 + (ADC_CH1 << 2);
+		bash_spi_transfer(command_dataw, command_datar, 2);
+				
+		gpio_set_pin_level(PB06_SPInCS_CARDB, 1);
+		/* Completed sample and read data from SPI VibraTek sampling via SPI ADC */
+
+		if (((cardB_type == CARD_VIBRATEK) || (cardB_type == CARD_VIBRAPOINT)) && (card_sampleindex < SAMPLE_BUFFER_SIZE)) {
+			cardBch1_samplebuffer[card_sampleindex] = command_datar[1];
+		}
+
+		if (((cardB_type == CARD_VIBRATEK) || (cardB_type == CARD_VIBRAPOINT)) && (!card_sampleindex)) {
+			/* Sample and read data from SPI VibraTek sampling via SPI ADC */
+			gpio_set_pin_level(PB06_SPInCS_CARDB, 0);
+
+			command_dataw[0] = 0x60 + (ADC_CH2 << 2);
+			bash_spi_transfer(command_dataw, command_datar, 2);
+	
+			gpio_set_pin_level(PB06_SPInCS_CARDB, 1);
+			/* Completed sample and read data from SPI VibraTek sampling via SPI ADC */
+
+			cardBch2_samplebuffer = command_datar[1];
 
 			/* Sample and read data from SPI VibraTek sampling via SPI ADC */
 			gpio_set_pin_level(PB06_SPInCS_CARDB, 0);
 
-			command_dataw[0] = 0x30 + (ADC_CH1 << 1);
-			command_dataw[1] = 0x00;
-			command_dataw[2] = 0x00;
-			p_xfer.txbuf = (uint8_t *)&command_dataw;
-			p_xfer.rxbuf = (uint8_t *)&command_datar;
-			p_xfer.size = 3;
+			command_dataw[0] = 0x60 + (ADC_CH3 << 2);
+			bash_spi_transfer(command_dataw, command_datar, 2);
 
-			spi_m_sync_transfer(&SPI_0, &p_xfer);
 			gpio_set_pin_level(PB06_SPInCS_CARDB, 1);
 			/* Completed sample and read data from SPI VibraTek sampling via SPI ADC */
 
-			command_datar[2] = 0x80 + ((command_datar[2] >> 1) & 0x7C);
-			cardBch1_samplebuffer[card_sampleindex] = command_datar[1];
-
-			if (!card_sampleindex) {
-				/* Sample and read data from SPI VibraTek sampling via SPI ADC */
-				gpio_set_pin_level(PB06_SPInCS_CARDB, 0);
-
-				command_dataw[0] = 0x30 + (ADC_CH2 << 1);
-				command_dataw[1] = 0x00;
-				command_dataw[2] = 0x00;
-				p_xfer.txbuf = (uint8_t *)&command_dataw;
-				p_xfer.rxbuf = (uint8_t *)&command_datar;
-				p_xfer.size = 3;
-
-				spi_m_sync_transfer(&SPI_0, &p_xfer);
-				gpio_set_pin_level(PB06_SPInCS_CARDB, 1);
-				/* Completed sample and read data from SPI VibraTek sampling via SPI ADC */
-
-				command_datar[2] = 0x80 + ((command_datar[2] >> 1) & 0x7C);
-				cardBch2_samplebuffer = command_datar[1];
-
-				/* Sample and read data from SPI VibraTek sampling via SPI ADC */
-				gpio_set_pin_level(PB06_SPInCS_CARDB, 0);
-
-				command_dataw[0] = 0x30 + (ADC_CH3 << 1);
-				command_dataw[1] = 0x00;
-				command_dataw[2] = 0x00;
-				p_xfer.txbuf = (uint8_t *)&command_dataw;
-				p_xfer.rxbuf = (uint8_t *)&command_datar;
-				p_xfer.size = 3;
-
-				spi_m_sync_transfer(&SPI_0, &p_xfer);
-				gpio_set_pin_level(PB06_SPInCS_CARDB, 1);
-				/* Completed sample and read data from SPI VibraTek sampling via SPI ADC */
-
-				command_datar[2] = 0x80 + ((command_datar[2] >> 1) & 0x7C);
-				cardBch3_samplebuffer = command_datar[1];
-			}
+			cardBch3_samplebuffer = command_datar[1];
+		}
+		
 		/* If Card B has a Maxi IO installed then... */
-		} else if (cardB_type == CARD_MAXI_IO)  {
+		if (cardB_type == CARD_MAXI_IO)  {
 			// TODO
-			delay_us(50);
 		/* If Card B has a Mini IO installed then... */
 		} else if (cardB_type == CARD_MINI_IO)  {
 			if (miniB_chan) {
@@ -885,27 +860,23 @@ int main_loop(void)
 			}
 		/* If Card B has nothing installed then... */
 		} else if (cardB_type == CARD_NOTFITTED)  {
-			delay_us(50);
 		}
 
 		/* If any card slot has a VibraTek or VibraPoint installed then... */
 		if ((cardA_type == CARD_VIBRATEK) || (cardB_type == CARD_VIBRATEK) || (cardA_type == CARD_VIBRAPOINT) || (cardB_type == CARD_VIBRAPOINT)) {
 			/* Increment the sample index pointer */
 			card_sampleindex++;
-
+			
 			/* When the buffers are full, it is time to signal that we need to send the UDP packets */
 			if ((card_sampleindex == SAMPLE_BUFFER_SIZE) && (readenvironment == 1)) {
 				readenvironment = 2;
+				read_boardvalues();
 			}
 		} else if (readenvironment == 1) {
 			/* If we just want to indicate that the board live values need to be read...*/
 			readenvironment = 2;
-		}
-
-		/* If they do indeed need to be read, then go ahead and read them all using "read_boardvalues()" */
-	//	if (readenvironment == 2) {
 			read_boardvalues();
-	//	}
+		}
 
 		/* Every 0.5 seconds, we need to check BPDU packets and ring topology state-machines... */
 		if (ring_timer) {
@@ -921,9 +892,18 @@ int main_loop(void)
 			/* If we are configured as a base-station, update the global variable containing the Ethernet ring topology state */
 			if (((CONFIG *)&settings_buffer)->loop_basestation) {
 				ring_broken = (ring) ? RING_BROKEN : RING_CLOSED;
+			} else {
+				ring_broken = RING_NOTCONFIGURED;
 			}
 		}
 
+		key_check++;
+		if (key_check < 3000) {
+			continue;
+		}
+		
+		key_check = 0;
+		
 		/* check for a character being pressed on the CLI keyboard */
 		if (io_read((struct io_descriptor *const)io, (uint8_t *const)&ch, 1)) {
 			/* If so, then read and get the character pressed */
@@ -932,17 +912,11 @@ int main_loop(void)
 			switch (key) {
 				case 'r':
 				case 'R':
-				/* [REBOOT] command */
-				wdt_disable(&WDT_0);
-
-				/* Get ready to reboot the device, by not kicking the watchdog */
-				wdt_set_timeout_period(&WDT_0, 100, 25);
-				wdt_enable(&WDT_0);
-
 				xprintf("\r\n. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .\r\n");
 				xprintf("<CLI DEBUG> [REBOOT] command\r\n");
 				xprintf(". . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .\r\n\r\n");
-				reboot_actioned = 1;
+
+				_reset_mcu();
 				break;
 
 				case 'd':
@@ -988,14 +962,8 @@ int main_loop(void)
 					xprintf("MultiSense [configuration WRITTEN]\r\n");
 				}
 				
-				wdt_disable(&WDT_0);
-
-				/* Get ready to reboot the device, by not kicking the watchdog */
-				wdt_set_timeout_period(&WDT_0, 100, 25);
-				wdt_enable(&WDT_0);
-				
 				xprintf("Rebooting...\r\n");
-				while (1) {}
+				_reset_mcu();
 				break;
 
 				case 'b':
@@ -1039,28 +1007,62 @@ int main_loop(void)
 				case 'l':
 				case 'L':
 				/* [LIVE BOARD PRINT] command */
-				xprintf("\r\n. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .\r\n");
-				xprintf("<CLI DEBUG> [LIVE BOARD PRINT] command\r\n");
-				xprintf("<CLI DEBUG> ID               = %u\r\n", ((CONFIG *)&settings_buffer)->ID);
-				xprintf("<CLI DEBUG> Name             = %s\r\n", ((CONFIG *)&settings_buffer)->name);
-				xprintf("<CLI DEBUG> gainA            = %d\r\n", ((CONFIG *)&settings_buffer)->gain_cardA);
-				xprintf("<CLI DEBUG> gainB            = %d\r\n", ((CONFIG *)&settings_buffer)->gain_cardB);
-				xprintf("<CLI DEBUG> Mode             = %s\r\n", (((CONFIG *)&settings_buffer)->loop_basestation) ? "BASESTATION" : "PASS-THROUGH");
-				xprintf("<CLI DEBUG> Water1           = %d\r\n", (int)readdata_water1);
-				xprintf("<CLI DEBUG> Water2           = %d\r\n", (int)readdata_water2);
-				xprintf("<CLI DEBUG> HV               = %d\r\n", (int)highvoltage);
-				xprintf("<CLI DEBUG> Temp             = %d\r\n", ((((((int)readdata_tempmoisture[1] * 256)) + ((int)readdata_tempmoisture[0])) * 165) / 65536) - 40);
-				xprintf("<CLI DEBUG> Humidity         = %d\r\n", ((int)((((int)readdata_tempmoisture[3] * 256)) + ((int)readdata_tempmoisture[2])) * 100) / 65536);
-				xprintf("<CLI DEBUG> Tamper           = %s\r\n", (tamper) ? "UP" : "DOWN");
-				xprintf("<CLI DEBUG> Port1            = %s\r\n", (link_port1) ? "LINK OK" : "LINK DOWN");
-				xprintf("<CLI DEBUG> Port2            = %s\r\n", (link_port2) ? "LINK OK" : "LINK DOWN");
-				xprintf("<CLI DEBUG> Port3            = %s\r\n", (link_port3) ? "LINK OK" : "LINK DOWN");
-				xprintf("<CLI DEBUG> CardA            = %s\r\n", (cardA_type == CARD_NOTFITTED) ? "NOT FITTED" : (cardA_type == CARD_VIBRAPOINT) ? "VibraPoint" : (cardA_type == CARD_VIBRATEK) ? "VibraTek" :
+				xprintf("\r\n. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .");
+				xprintf("\r\n");
+				xprintf("<CLI DEBUG> [LIVE BOARD PRINT] command");
+				xprintf("\r\n");
+				xprintf("<CLI DEBUG> ID               = %d", ((CONFIG *)&settings_buffer)->ID);
+				xprintf("\r\n");
+				xprintf("<CLI DEBUG> Name             = %s", ((CONFIG *)&settings_buffer)->name);
+				xprintf("\r\r\r\r\r\n");
+				xprintf("<CLI DEBUG> gainA            = %d", ((CONFIG *)&settings_buffer)->gain_cardA);
+				xprintf("\r\n");
+				xprintf("<CLI DEBUG> gainB            = %d", ((CONFIG *)&settings_buffer)->gain_cardB);
+				xprintf("\r\n");
+				xprintf("<CLI DEBUG> Mode             = %s", (((CONFIG *)&settings_buffer)->loop_basestation) ? "BASESTATION" : "PASS-THROUGH");
+				xprintf("\r\r\r\r\r\n");
+				xprintf("<CLI DEBUG> Water1           = %d", (int)readdata_water1);
+				xprintf("\r\n");
+				xprintf("<CLI DEBUG> Water2           = %d", (int)readdata_water2);
+				xprintf("\r\n");
+				xprintf("<CLI DEBUG> HV               = %d", (int)highvoltage);
+				xprintf("\r\n");
+				
+				if ((readdata_tempmoisture[1] == 0xFF) && (readdata_tempmoisture[0] == 0xFF)) {
+					xprintf("<CLI DEBUG> Temp             = ERROR");
+				} else if ((((((((int)readdata_tempmoisture[0] * 256)) + ((int)readdata_tempmoisture[1])) * 165) / 65536) - 40) >= 0) {
+					xprintf("<CLI DEBUG> Temp             = %dC", ((((((int)readdata_tempmoisture[0] * 256)) + ((int)readdata_tempmoisture[1])) * 165) / 65536) - 40);
+				} else {
+					xprintf("<CLI DEBUG> Temp             = -%dC", -(((((((int)readdata_tempmoisture[0] * 256)) + ((int)readdata_tempmoisture[1])) * 165) / 65536) - 40));
+				}
+			
+				xprintf("\r\n");
+				
+				if ((readdata_tempmoisture[3] == 0xFF) && (readdata_tempmoisture[2] == 0xFF)) {
+					xprintf("<CLI DEBUG> Humidity         = ERROR");
+					} else {
+					xprintf("<CLI DEBUG> Humidity         = %d%c", ((int)((((int)readdata_tempmoisture[2] * 256)) + ((int)readdata_tempmoisture[3])) * 100) / 65536, '%');
+				}
+				
+				xprintf("\r\n");
+				xprintf("<CLI DEBUG> Tamper           = %s", (tamper) ? "UP" : "DOWN");
+				xprintf("\r\r\r\r\n");
+				xprintf("<CLI DEBUG> Port1            = %s", (link_port1) ? "LINK OK" : "LINK DOWN");
+				xprintf("\r\r\r\r\n");
+				xprintf("<CLI DEBUG> Port2            = %s", (link_port2) ? "LINK OK" : "LINK DOWN");
+				xprintf("\r\r\r\r\n");
+				xprintf("<CLI DEBUG> Port3            = %s", (link_port3) ? "LINK OK" : "LINK DOWN");
+				xprintf("\r\r\r\r\n");
+				xprintf("<CLI DEBUG> CardA            = %s", (cardA_type == CARD_NOTFITTED) ? "NOT FITTED" : (cardA_type == CARD_VIBRAPOINT) ? "VibraPoint" : (cardA_type == CARD_VIBRATEK) ? "VibraTek" :
 					                                             (cardA_type == CARD_MAXI_IO) ? "Maxi IO" : (cardA_type == CARD_MINI_IO) ? "Mini IO" : (cardA_type == CARD_PE) ? "P&E" : "Unknown");
-				xprintf("<CLI DEBUG> CardB            = %s\r\n", (cardB_type == CARD_NOTFITTED) ? "NOT FITTED" : (cardB_type == CARD_VIBRAPOINT) ? "VibraPoint" : (cardB_type == CARD_VIBRATEK) ? "VibraTek" :
+				xprintf("\r\r\r\r\r\n");
+				xprintf("<CLI DEBUG> CardB            = %s", (cardB_type == CARD_NOTFITTED) ? "NOT FITTED" : (cardB_type == CARD_VIBRAPOINT) ? "VibraPoint" : (cardB_type == CARD_VIBRATEK) ? "VibraTek" :
 																 (cardB_type == CARD_MAXI_IO) ? "Maxi IO" : (cardB_type == CARD_MINI_IO) ? "Mini IO" : "Unknown");
-				xprintf("<CLI DEBUG> Ring Topology    = %s\r\n", (ring_broken == RING_BROKEN) ? "BROKEN" : (ring_broken == RING_CLOSED) ? "LOOP" : "N/A");
-				xprintf("<CLI DEBUG> Firmware         = %d.%d\r\n", MULTISENSE_FIRMWARE_MAJOR, MULTISENSE_FIRMWARE_MINOR);
+				xprintf("\r\r\r\r\r\n");
+				xprintf("<CLI DEBUG> Ring Topology    = %s", (ring_broken == RING_BROKEN) ? "BROKEN" : (ring_broken == RING_CLOSED) ? "LOOP" : "N/A");
+				xprintf("\r\r\r\r\r\n");
+				xprintf("<CLI DEBUG> Firmware         = %d.%d", MULTISENSE_FIRMWARE_MAJOR, MULTISENSE_FIRMWARE_MINOR);
+				xprintf("\r\n");
 				xprintf(". . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .\r\n\r\n");
 				break;
 				
@@ -1069,9 +1071,9 @@ int main_loop(void)
 				/* [IP SCHEME / NETWORK] command */
 				xprintf("\r\n. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .\r\n");
 				xprintf("<CLI DEBUG> [IP SCHEME / NETWORK] command\r\n");
-				xprintf("<CLI DEBUG> IP               = %d.%d.%d.%d\r\n", uip_ipaddr2(ipaddr), uip_ipaddr1(ipaddr), uip_ipaddr4(ipaddr), uip_ipaddr3(ipaddr));
-				xprintf("<CLI DEBUG> Netmask          = %d.%d.%d.%d\r\n", uip_ipaddr2(netmask), uip_ipaddr1(netmask), uip_ipaddr4(netmask), uip_ipaddr3(netmask));
-				xprintf("<CLI DEBUG> Gateway          = %d.%d.%d.%d\r\n", uip_ipaddr2(gwaddr), uip_ipaddr1(gwaddr), uip_ipaddr4(gwaddr), uip_ipaddr3(gwaddr));
+				xprintf("<CLI DEBUG> IP               = %d.%d.%d.%d\r\n", uip_ipaddr1(ipaddr), uip_ipaddr2(ipaddr), uip_ipaddr3(ipaddr), uip_ipaddr4(ipaddr));
+				xprintf("<CLI DEBUG> Netmask          = %d.%d.%d.%d\r\n", uip_ipaddr1(netmask), uip_ipaddr2(netmask), uip_ipaddr3(netmask), uip_ipaddr4(netmask));
+				xprintf("<CLI DEBUG> Gateway          = %d.%d.%d.%d\r\n", uip_ipaddr1(gwaddr), uip_ipaddr2(gwaddr), uip_ipaddr3(gwaddr), uip_ipaddr4(gwaddr));
 				xprintf("<CLI DEBUG> MAC              = %x:%x:%x:%x:%x:%x\r\n", mac_raw[0], mac_raw[1], mac_raw[2], mac_raw[3], mac_raw[4], mac_raw[5]);
 				xprintf(". . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .\r\n\r\n");
 				break;
@@ -1100,12 +1102,6 @@ int main_loop(void)
 				xprintf(". . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .\r\n\r\n");
 				break;
 			}
-		}
-		
-		/* If we have no reboot being scheduled, then kick the watchdog as the last remaining task of the main loop */
-		if (!reboot_actioned) {
-			/* Kick the watchdog time-out facility */
-			wdt_feed(&WDT_0);
 		}
 	}
 }
@@ -1145,65 +1141,50 @@ int main(void)
 			
 	/* Initialize the lower-level Atmel drivers, hardware and HAL interface */
 	atmel_start_init();
-	
-	hri_adc_set_DSEQCTRL_INPUTCTRL_bit(ADC0);    //enable DMA update of the Input Control register
-	// Similar to above call, other functions like CTRLB reg REFCTRL etc.. can be added to
-	// DMA update sequence by writing the respective DSEQCTRL bit
 
-	/* Set DMA source and destination */
-	_dma_set_source_address(DMA_CHANNEL_0, (const void *const)inputctrl_buff);
-	_dma_set_destination_address(DMA_CHANNEL_0, (void *)(uint32_t) &(ADC0->DSEQDATA.reg));
-	_dma_set_data_amount(DMA_CHANNEL_0, SEQ_LENGTH);
-	_dma_enable_transaction(DMA_CHANNEL_0, false);
-	
 	usart_async_get_io_descriptor(&USART_1, &io);
 	usart_async_register_callback(&USART_1, USART_ASYNC_TXC_CB, tx_callb);
 	usart_async_register_callback(&USART_1, USART_ASYNC_RXC_CB, rx_callb);
 	usart_async_enable(&USART_1);
 	
-	xprintf("\n\n\n\n\n\n\n\n\n\n\n\n---------------------------------------------------------------------------------------------------------------------\r\n");
-	xprintf("MultiSense [START]\r\n");
-	xprintf("---------------------------------------------------------------------------------------------------------------------\r\n");
-
+	hri_adc_set_DSEQCTRL_INPUTCTRL_bit(ADC0);
+	_dma_set_source_address(DMA_CHANNEL_0, (const void *const)inputctrl_buff);
+	_dma_set_destination_address(DMA_CHANNEL_0, (void *)(uint32_t) &(ADC0->DSEQDATA.reg));
+	_dma_set_data_amount(DMA_CHANNEL_0, SEQ_LENGTH);
+	_dma_enable_transaction(DMA_CHANNEL_0, false);
+	
+	xprintf("\r\n\r\n\r\n---------------------\r\nBOOT-UP\r\n---------------------\r\n\r\n");
+	
 	/* Clear and initialize the global variables */
 	var_init();
-	xprintf("MultiSense [init global-variables done]\r\n");
 
 	/* Set-up the none-hardware utilized GPIO pins */
 	gpio_init();
-	xprintf("MultiSense [init I/O done]\r\n");
 
 	/* Set-up the SPI bus and the USB host stack */
 	comms_init();
-	xprintf("MultiSense [init SPI & USB done]\r\n");
 
 	/* Reset the Ethernet SWITCH IC via GPIO reset line */
 	switch_init();
-	xprintf("MultiSense [Ethernet SWITCH reset]\r\n");
-
+	
 	/* Initialize the Ethernet SWITCH IC via the SPI bus */
 	switch_configure();
-	xprintf("MultiSense [init SWITCH done]\r\n");
 
 	/* Define and start the main timer as 1/10th of a second ticker */
 	timer_setup();
-	xprintf("MultiSense [init TIMER done]\r\n");
 
 	/* Internal on-chip ADC feature initialization, used for the water detection feature */
 	ADC_init();
-	xprintf("MultiSense [init ADC done]\r\n");
 
 	/* Enable and configure the Cryptography on-chip engine with the AES 128-bit private-key */
 	crypto_init();
-	xprintf("MultiSense [init CRYPTO done]\r\n");
 
 	/* IP stack initialization */
 	uip_init();																									// initialize the IP stack
-	xprintf("MultiSense [init uIP done]\r\n");
 
 	/* Set the board MAC and IP address along with the network schemes */
 	address_configure();
-
+	
 	if (((CONFIG *)&settings_buffer)->ID > 0x00000000) {
 		/* Initialize the ring loop topology function */
 		ring_init((unsigned char)(((CONFIG *)&settings_buffer)->loop_basestation), (unsigned char *)&mac_raw);
@@ -1212,37 +1193,27 @@ int main(void)
 		xprintf("* THE MULTI-SENSE DEVICE [ID] HAS NOT BEEN SET. THIS DEFICE WILL NOT FUNCTION OR RUN AS    *\r\n");
 		xprintf("* NORMAL UNTIL THE [ID] NUMBER HAS BEEN ENTERED BY THIS TERMINAL FACILITY.                 *\r\n");
 		xprintf("* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  *\r\n");
-		xprintf("* PLEASE ENTER THE 32-BIT DEVICE [ID] BELOW:                                               *\r\n");
-		xprintf("********************************************************************************************\r\n\r\n");
+		xprintf("* PLEASE ENTER THE 32-BIT DEVICE [ID] BELOW                                                *\r\n");
+		xprintf("********************************************************************************************\r\n");
 	}
 	
-	/* Create, enable and start the system watchdog (4 seconds timeout period) */
-	
-	watchdog_init();
-	
 	if (((CONFIG *)&settings_buffer)->ID > 0x00000000) {
-		xprintf("MultiSense [boot-up & init completed]\r\n");
+		xprintf("MultiSense [boot-up & init completed ID = %d]\r\n", ((CONFIG *)&settings_buffer)->ID);
 		xprintf("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\r\n");
 	} else {
 		do {
-			xprintf("\r\nEnter new [ID] now:\r\n");
+			xprintf("\r\nEnter new [ID] now: ");
 			/* check for a character being pressed on the CLI keyboard */
 					
 			ID_index = 0;
 					
 			while (1) {
+				delay_ms(100);
+				
 				if (io_read((struct io_descriptor *const)io, (uint8_t *const)&ch, 1)) {
 					/* If so, then read and get the character pressed */
 				
 					if ((unsigned char)ch == 10) {
-						continue;
-					}
-				
-					if ((unsigned char)ch == 8) {
-						if (ID_index) {
-							ID_index--;
-						}
-					
 						continue;
 					}
 				
@@ -1263,10 +1234,8 @@ int main(void)
 					}
 				
 					ID_string[ID_index++] = (unsigned char)ch;
+					xprintf("%c", ch);
 				}
-				
-				/* Kick the watchdog time-out facility */
-				wdt_feed(&WDT_0);
 			}
 			
 			ID_string[ID_index] = 0;
@@ -1280,6 +1249,11 @@ int main(void)
 					if (((unsigned char)ch == 'y') || ((unsigned char)ch == 'Y')) {
 						sscanf((char *)ID_string, "%u", &new_id);
 		
+						if (!new_id) {
+							xprintf("\r\nERROR ID cannot be <ZERO>!!!!!\r\n");
+							break;
+						}
+		
 						/* Re-write default values ready for write-back */
 						((CONFIG *)&settings_buffer)->ID = new_id;
 
@@ -1289,26 +1263,20 @@ int main(void)
 						} else {
 							xprintf("MultiSense [configuration WRITTEN]\r\n");
 						}
-					
-						wdt_disable(&WDT_0);
-
-						/* Get ready to reboot the device, by not kicking the watchdog */
-						wdt_set_timeout_period(&WDT_0, 100, 25);
-						wdt_enable(&WDT_0);
 									
-						xprintf("Rebooting...\r\n");
-						while (1) {}
+						xprintf("\r\nRebooting...(please wait)\r\n\r\n");
+					   _reset_mcu();
 					} else if (((unsigned char)ch == 'n') || ((unsigned char)ch == 'N')) {
 						break;
 					}
 				}
-				
-				/* Kick the watchdog time-out facility */
-				wdt_feed(&WDT_0);
 			}
 		}
 		while (1);
 	}
+	
+	/* Create, enable and start the system watchdog (4 seconds timeout period) */
+	watchdog_init();
 	
 	/* Run the main-loop */
 	main_loop();

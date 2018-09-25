@@ -30,6 +30,29 @@
 #include <hpl_adc_base.h>
 
 // *****************************************************************************************************************************************************************
+// Function:    bash_spi_transfer(unsigned char *tx, unsigned char *rx, int size)
+// . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+// Description: rolls round the push-pull MOSI/MISO of the SPI bus for [size] bytes of 8-bits, MSB
+// Returns:     Nothing
+// *****************************************************************************************************************************************************************
+static void inline bash_spi_transfer(unsigned char *tx, unsigned char *rx, int size)
+{
+	int count, loop;
+	
+	for (count = 0; count < size; count++) {
+		rx[count] = 0;
+		
+		for (loop = 8; loop; loop--) {
+			gpio_set_pin_level(PB12_SPI_MOSI, (tx[count] & (1 << (loop - 1))) ? 1 : 0);
+			gpio_set_pin_level(PB15_SPI_CLK, 0);
+			gpio_set_pin_level(PB15_SPI_CLK, 1);
+			
+			rx[count] |= (gpio_get_pin_level(PB13_SPI_MISO) << (loop - 1));
+		}
+	}
+}
+
+// *****************************************************************************************************************************************************************
 // Function:    EEprom_settings(unsigned char *data, unsigned int size, unsigned char write_notread)
 // . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
 // Description: when requiring EEprom configuration data to be read or written to/from the non-volatile area, this facilitates the [NV] access
@@ -39,12 +62,14 @@ int EEprom_settings(unsigned char *data, unsigned int size, unsigned char write_
 {
 	/* If we have a write flag set, then write the setting configuration overlay image into NV ram */
 	if (write_notread) {
-		return nv_storage_write(1, 0, data, size);
+		return flash_write(&FLASH_0, 256 * 1024, data, size);
 	}
 	
 	/* else, if we have a read flag set, then read the setting configuration overlay image from the NV ram into the "data" pointer"*/
-	return nv_storage_read(1, 0, data, size);
+	return flash_read(&FLASH_0, 256 * 1024, data, size);
 }
+
+static unsigned char	command_dataw[3 + 1], command_datar[3 + 1];
 
 // *****************************************************************************************************************************************************************
 // Function:    checkKSZreg(uint16_t reg, unsigned char verify)
@@ -54,23 +79,17 @@ int EEprom_settings(unsigned char *data, unsigned int size, unsigned char write_
 // *****************************************************************************************************************************************************************
 bool checkKSZreg(uint16_t reg, unsigned char verify)
 {
-	struct spi_xfer           p_xfer;
-	unsigned char			  command_dataw[3 + 1], command_datar[3 + 1];
-		
 	/* Lower the nCS line for this SPI device */	
 	gpio_set_pin_level(PB07_SPInCS_KSZ8974, 0);	
-		
+	
     /* Setup the 3 control bytes to perform a register read operation */		
 	command_dataw[0] = 0x40 + REG_SPI_READ + (unsigned char)(reg >> 7);
 	command_dataw[1] = (unsigned char)(reg & 0x7F) << 1;
 	command_dataw[2] = 0x00;
-	p_xfer.txbuf = (uint8_t *)&command_dataw;
-	p_xfer.rxbuf = (uint8_t *)&command_datar;
-	p_xfer.size = 3;
 	
 	/* Perform the actual 3-byte push/pull SPI operation */
-	spi_m_sync_transfer(&SPI_0, &p_xfer);
-	
+	bash_spi_transfer(command_dataw, command_datar, 3);
+
 	/* Raise the nCS line for this SPI device */	
 	gpio_set_pin_level(PB07_SPInCS_KSZ8974, 1);
 	
@@ -86,9 +105,6 @@ bool checkKSZreg(uint16_t reg, unsigned char verify)
 // *****************************************************************************************************************************************************************
 unsigned char readKSZreg(uint16_t reg)
 {
-	struct spi_xfer           p_xfer;
-	unsigned char			  command_dataw[3 + 1], command_datar[3 + 1];
-	
 	/* Lower the nCS line for this SPI device */	
 	gpio_set_pin_level(PB07_SPInCS_KSZ8974, 0);
 	
@@ -96,17 +112,14 @@ unsigned char readKSZreg(uint16_t reg)
 	command_dataw[0] = 0x40 + REG_SPI_READ + (unsigned char)(reg >> 7);
 	command_dataw[1] = (unsigned char)(reg & 0x7F) << 1;
 	command_dataw[2] = 0x00;
-	p_xfer.txbuf = (uint8_t *)&command_dataw;
-	p_xfer.rxbuf = (uint8_t *)&command_datar;
-	p_xfer.size = 3;
 	
 	/* Perform the actual 3-byte push/pull SPI operation */
-	spi_m_sync_transfer(&SPI_0, &p_xfer);
+	bash_spi_transfer(command_dataw, command_datar, 3);
 	
 	/* Raise the nCS line for this SPI device */
 	gpio_set_pin_level(PB07_SPInCS_KSZ8974, 1);
 	
-	/* Just return the actual far-end register daat value */
+	/* Just return the actual far-end register data value */
 	return (command_datar[2]);
 }
 
@@ -118,9 +131,6 @@ unsigned char readKSZreg(uint16_t reg)
 // *****************************************************************************************************************************************************************
 void writeKSZreg(uint16_t reg, unsigned char value)
 {
-	struct spi_xfer           p_xfer;
-	unsigned char			  command_dataw[3 + 1], command_datar[3 + 1];
-	
 	/* Lower the nCS line for this SPI device */
 	gpio_set_pin_level(PB07_SPInCS_KSZ8974, 0);
 	
@@ -128,12 +138,9 @@ void writeKSZreg(uint16_t reg, unsigned char value)
 	command_dataw[0] = 0x40 + REG_SPI_WRITE + (unsigned char)(reg >> 7);
 	command_dataw[1] = (unsigned char)(reg & 0x7F) << 1;
 	command_dataw[2] = value;
-	p_xfer.txbuf = (uint8_t *)&command_dataw;
-	p_xfer.rxbuf = (uint8_t *)&command_datar;
-	p_xfer.size = 3;
 	
 	/* Perform the actual 3-byte push/pull SPI operation */
-	spi_m_sync_transfer(&SPI_0, &p_xfer);
+	bash_spi_transfer(command_dataw, command_datar, 3);
 	
 	/* Raise the nCS line for this SPI device */
 	gpio_set_pin_level(PB07_SPInCS_KSZ8974, 1);

@@ -164,7 +164,7 @@ void xprintf(char* format, ...)
 // *****************************************************************************************************************************************************************
 void read_boardvalues(void)
 {
-	int		err;
+	int		err, counter_det;
 	
 	if (read_hardware_index == 0) {
 		hri_adc_write_INPUTCTRL_reg(ADC0, 0x1800 + 0);	/* Select AIN<0> - [Water 1] Analogue Input */
@@ -172,8 +172,6 @@ void read_boardvalues(void)
 	
 		/* Read the ADC value of the first water sensor. If bad result write error debug and set variable to 0xFF */
 		err = adc_sync_read_channel(&ADC_0, 0, (uint8_t *const)&readdata_water1, 1);
-		xprintf("err water 1 = %d\r\n", err);
-	
 		if (err != 1) {
 			xprintf("Could NOT read from the water detector 1\r\n");
 	
@@ -187,8 +185,6 @@ void read_boardvalues(void)
 	
 		/* Read the ADC value of the second water sensor. If bad result write error debug and set variable to 0xFF */
 		err = adc_sync_read_channel(&ADC_0, 0, (uint8_t *const)&readdata_water2, 1);
-		xprintf("err water 2 = %d\r\n", err);
-		
 		if (err != 1) {
 			xprintf("Could NOT read from the water detector 2\r\n");
 			
@@ -202,8 +198,6 @@ void read_boardvalues(void)
 		
 		/* Read the ADC value of the [HV] divider. If bad result write error debug and set variable to 0x00 */
 		err = adc_sync_read_channel(&ADC_0, 0, (uint8_t *const)&highvoltage, 1);
-		xprintf("err HV = %d\r\n", err);
-	
 		if (err != 1) {
 			xprintf("Could NOT read from the HV divider\r\n");
 		
@@ -221,11 +215,6 @@ void read_boardvalues(void)
 		
 		read_hardware_index = 0;
 	}
-
- xprintf("0 = %x\r\n", readdata_tempmoisture[0]);
- xprintf("1 = %x\r\n", readdata_tempmoisture[1]);
- xprintf("2 = %x\r\n", readdata_tempmoisture[2]);
- xprintf("3 = %x\r\n", readdata_tempmoisture[3]);
 
 	/* Read the main simple GPIO inputs for determining the status of tamper, daughter cards */ 
 	tamper = (gpio_get_pin_level(PB02_TAMP_OP)) ? 1 : 0;
@@ -274,15 +263,26 @@ void read_boardvalues(void)
 	/* Detect change of status of Slot [A] daughter-card */
 	if ((!cardA_old) && (cardA_present)) {
 		/* Read the I2C device address on the card to establish type of card */
-	
-		if (!(err = I2C_check_deviceID(PC27_CARDA_I2C_SDA, PC28_CARDA_I2C_CLK, 0x60))) {
-			cardA_type = CARD_VIBRATEK;
-		} else if (!(err = I2C_check_deviceID(PC27_CARDA_I2C_SDA, PC28_CARDA_I2C_CLK, 0x50))) {
-			cardA_type = CARD_PE;
-		} else if ((!(err = I2C_check_deviceID(PC27_CARDA_I2C_SDA, PC28_CARDA_I2C_CLK, 0x41))) && (!(err = I2C_check_deviceID(PC27_CARDA_I2C_SDA, PC28_CARDA_I2C_CLK, 0x68)))) {
-			cardA_type = CARD_MINI_IO;
-		} else {
-			cardA_type = CARD_NOTFITTED;
+		
+		counter_det = 10;
+		while (counter_det--) {
+			delay_ms(500);
+			
+			/* Kick the watchdog time-out facility */
+			wdt_feed(&WDT_0);
+			
+			if (!(err = I2C_check_deviceID(PC27_CARDA_I2C_SDA, PC28_CARDA_I2C_CLK, 0x60))) {
+				cardA_type = CARD_VIBRATEK;
+				break;
+			} else if (!(err = I2C_check_deviceID(PC27_CARDA_I2C_SDA, PC28_CARDA_I2C_CLK, 0x50))) {
+				cardA_type = CARD_PE;
+				break;
+			} else if ((!(err = I2C_check_deviceID(PC27_CARDA_I2C_SDA, PC28_CARDA_I2C_CLK, 0x41))) && (!(err = I2C_check_deviceID(PC27_CARDA_I2C_SDA, PC28_CARDA_I2C_CLK, 0x68)))) {
+				cardA_type = CARD_MINI_IO;
+				break;
+			} else {
+				cardA_type = CARD_NOTFITTED;
+			}
 		}
 
 		if (err < 0) {
@@ -350,12 +350,22 @@ void read_boardvalues(void)
 	if ((!cardB_old) && (cardB_present)) {
 		/* Read the I2C device address on the card to establish type of card */
 		
-		if (!(err = I2C_check_deviceID(PB24_CARDB_I2C_SDA, PB25_CARDB_I2C_CLK, 0x60))) {
-			cardB_type = CARD_VIBRATEK;
-		} else if ((!(err = I2C_check_deviceID(PB24_CARDB_I2C_SDA, PB25_CARDB_I2C_CLK, 0x41))) && (!(err = I2C_check_deviceID(PB24_CARDB_I2C_SDA, PB25_CARDB_I2C_CLK, 0x68)))) {
-			cardB_type = CARD_MINI_IO;		
-		} else {
-			cardB_type = CARD_NOTFITTED;
+		counter_det = 10;
+		while (counter_det--) {
+			delay_ms(500);
+			
+			/* Kick the watchdog time-out facility */
+			wdt_feed(&WDT_0);
+			
+			if (!(err = I2C_check_deviceID(PB24_CARDB_I2C_SDA, PB25_CARDB_I2C_CLK, 0x60))) {
+				cardB_type = CARD_VIBRATEK;
+				break;
+			} else if ((!(err = I2C_check_deviceID(PB24_CARDB_I2C_SDA, PB25_CARDB_I2C_CLK, 0x41))) && (!(err = I2C_check_deviceID(PB24_CARDB_I2C_SDA, PB25_CARDB_I2C_CLK, 0x68)))) {
+				cardB_type = CARD_MINI_IO;
+				break;
+			} else {
+				cardB_type = CARD_NOTFITTED;
+			}
 		}
 		
 		if (err < 0) {
@@ -398,7 +408,7 @@ void read_boardvalues(void)
 	} else if (!cardB_present) {
 		cardB_type = CARD_NOTFITTED;
 		
-		if (cardA_old) {
+		if (cardB_old) {
 			xprintf("CARDB has been REMOVED\r\n");
 		}
 	}

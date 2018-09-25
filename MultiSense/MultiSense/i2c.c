@@ -27,7 +27,7 @@
 #include <hal_init.h>
 #include <hpl_adc_base.h>
 
-#define I2C_DELAY		5																	// 5 micro-second delay
+#define I2C_DELAY		15																	// 15 micro-second delay
 
 // * --------------------------------------------------------------------------------------------------------------------------------- 
 // * MACRO:               I2C_init() : High Level									                     
@@ -468,7 +468,7 @@ int I2C_setGAIN(uint8_t sda,  uint8_t clk, unsigned char dac)
     I2C_WAITACKOP(-2);
     I2C_SENDDATA(0x00, forloop);
     I2C_WAITACKOP(-3);
-	I2C_SENDDATA(0x00, forloop);
+	I2C_SENDDATA(dac, forloop);
 	I2C_WAITACKOP(-3);
 	
 	/* If successful, and code execution got here, the close the I2C channel */
@@ -495,6 +495,21 @@ int I2C_getTEMPandMOISTURE(uint8_t sda,  uint8_t clk, unsigned char *th, unsigne
 	if ((!th) || (!tl) || (!hh) || (!hl)) {
 		return -1;
 	}
+
+	/* Open an I2C channel, send address 0x40, index register 0x0F to trigger-conversion */
+	I2C_OPEN(sda, clk);
+	I2C_START(-2);
+	I2C_SENDADDR(0x40, forloop);
+	I2C_WRITE();
+	I2C_WAITACKOP(-3);
+	I2C_SENDDATA(0x0F, forloop);
+	I2C_WAITACKOP(-4);
+	I2C_SENDDATA(0x01, forloop);
+	I2C_WAITACKOP(-4);
+	
+	I2C_STOP();
+	I2C_CLOSE();
+	/* If successful, and code execution got here, the close the I2C channel */
 
 	/* Open an I2C channel, send address 0x40, index register 0x00 */
 	I2C_OPEN(sda, clk);

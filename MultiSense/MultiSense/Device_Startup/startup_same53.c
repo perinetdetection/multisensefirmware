@@ -543,6 +543,4 @@ void Reset_Handler(void)
  */
 void Dummy_Handler(void)
 {
-        while (1) {
-        }
 }

@@ -30,7 +30,6 @@
 #include <hpl_adc_base.h>
 
 /* external timer list */
-extern struct io_descriptor		   *spio;
 extern struct timer_task			TIMER_0_task1;
 extern void							usb_device_cb_state_c(void);
 
@@ -116,16 +115,6 @@ void comms_init(void)
 		cdcdf_acm_register_callback(CDCDF_ACM_CB_STATE_C, (FUNC_PTR)usb_device_cb_state_c);
 		xprintf("cdcdf_acm_register_callback(CDCDF_ACM_CB_STATE_C, (FUNC_PTR)usb_device_cb_state_c)\r\n");
 	}
-
-	/* Setup the main SPI bus, 100 kHz, negative-edge triggered, 8-bit, MSB first */
-	spi_m_sync_set_baudrate(&SPI_0, 800000);
-	spi_m_sync_set_mode(&SPI_0, SPI_MODE_3);
-	spi_m_sync_set_char_size(&SPI_0, SPI_CHAR_SIZE_8);
-	spi_m_sync_set_data_order(&SPI_0, SPI_DATA_ORDER_MSB_1ST);
-	spi_m_sync_get_io_descriptor(&SPI_0, &spio);
-	
-	/* Start the SPI bus running */
-	spi_m_sync_enable(&SPI_0);
 }
 
 // *****************************************************************************************************************************************************************
@@ -149,11 +138,11 @@ void crypto_init(void)
 // *****************************************************************************************************************************************************************
 void switch_init(void)
 {
-	/* Go through the reset sequence of the GPIO for the Micrel Ethernet SWITCH */
+	/* Go through the reset sequence of the GPIO for the Micrel Ethernet-SWITCH */
 	gpio_set_pin_level(PB00_KSZ_RESET, 1);
-	delay_ms(1);
+	delay_ms(10);
 	gpio_set_pin_level(PB00_KSZ_RESET, 0);
-	delay_ms(1);
+	delay_ms(10);
 	gpio_set_pin_level(PB00_KSZ_RESET, 1);
 }
 
@@ -331,7 +320,7 @@ void address_configure(void)
 	uip_setnetmask(&netmask);
 	uip_setnetmask(&gwaddr);
 	
-	xprintf("MultiSense [init MAC/IP values] %x:%x:%x:%x:%x:%x %d.%d.%d.%d\r\n", mac_raw[0], mac_raw[1], mac_raw[2], mac_raw[3], mac_raw[4], mac_raw[5], uip_ipaddr2(ipaddr), uip_ipaddr1(ipaddr), uip_ipaddr4(ipaddr), uip_ipaddr3(ipaddr));
+	xprintf("MultiSense [init MAC/IP values] %x:%x:%x:%x:%x:%x %d.%d.%d.%d\r\n", mac_raw[0], mac_raw[1], mac_raw[2], mac_raw[3], mac_raw[4], mac_raw[5], uip_ipaddr1(ipaddr), uip_ipaddr2(ipaddr), uip_ipaddr3(ipaddr), uip_ipaddr4(ipaddr));
 	
 	/* Create and bind the main UDP socket for the MultiSense board */
 	main_socket = uip_udp_new(&gwaddr, htons(MAIN_UDPSOCKET));
@@ -392,6 +381,9 @@ void gpio_init(void)
 	gpio_set_pin_function(PB25_CARDB_I2C_CLK, GPIO_PIN_FUNCTION_OFF);
 	gpio_set_pin_function(PC27_CARDA_I2C_SDA, GPIO_PIN_FUNCTION_OFF);
 	gpio_set_pin_function(PC28_CARDA_I2C_CLK, GPIO_PIN_FUNCTION_OFF);
+	gpio_set_pin_function(PB12_SPI_MOSI, GPIO_PIN_FUNCTION_OFF);
+	gpio_set_pin_function(PB13_SPI_MISO, GPIO_PIN_FUNCTION_OFF);
+	gpio_set_pin_function(PB15_SPI_CLK, GPIO_PIN_FUNCTION_OFF);
 
 	/* Set all GPIO MultiSense pins to their respective INPUT or OUTPUT directions */
 	gpio_set_pin_direction(PB00_KSZ_RESET, GPIO_DIRECTION_OUT);
@@ -407,6 +399,9 @@ void gpio_init(void)
 	gpio_set_pin_direction(PB25_CARDB_I2C_CLK, GPIO_DIRECTION_OUT);
 	gpio_set_pin_direction(PC27_CARDA_I2C_SDA, GPIO_DIRECTION_IN);
 	gpio_set_pin_direction(PC28_CARDA_I2C_CLK, GPIO_DIRECTION_OUT);
+	gpio_set_pin_direction(PB12_SPI_MOSI, GPIO_DIRECTION_OUT);
+	gpio_set_pin_direction(PB13_SPI_MISO, GPIO_DIRECTION_IN);
+	gpio_set_pin_direction(PB15_SPI_CLK, GPIO_DIRECTION_OUT);
 
 	/* Set all GPIO MultiSense pins to their respective internal pull-up or pull-down configurations. Most of the GPIO has external PCB resistor pull-ups or pull-downs */
 	gpio_set_pin_pull_mode(PB00_KSZ_RESET, GPIO_PULL_OFF);
@@ -422,6 +417,7 @@ void gpio_init(void)
 	gpio_set_pin_pull_mode(PB25_CARDB_I2C_CLK, GPIO_PULL_OFF);
 	gpio_set_pin_pull_mode(PC27_CARDA_I2C_SDA, GPIO_PULL_OFF);
 	gpio_set_pin_pull_mode(PC28_CARDA_I2C_CLK, GPIO_PULL_OFF);
+	gpio_set_pin_pull_mode(PB13_SPI_MISO, GPIO_PULL_OFF);
 	
 	/* Set the initial levels of the GPIO output pins including the LEDs and the SPI slave select lines */
 	gpio_set_pin_level(PB03_LED_ETH, 0);
@@ -431,6 +427,8 @@ void gpio_init(void)
 	gpio_set_pin_level(PB07_SPInCS_KSZ8974, 1);
 	gpio_set_pin_level(PB25_CARDB_I2C_CLK, 0);
 	gpio_set_pin_level(PC28_CARDA_I2C_CLK, 0);
+	gpio_set_pin_level(PB12_SPI_MOSI, 1);
+	gpio_set_pin_level(PB15_SPI_CLK, 1);
 }
 	
 // *****************************************************************************************************************************************************************
@@ -440,9 +438,9 @@ void gpio_init(void)
 // Returns:     Nothing
 // *****************************************************************************************************************************************************************
 void watchdog_init(void)
-{	
+{
 	/* Set the main watchdog to 4 seconds timeout */
-	wdt_set_timeout_period(&WDT_0, 1000, 4096);
+	wdt_set_timeout_period(&WDT_0, 100, 25);
 	
 	/* Turn it on */
 	wdt_enable(&WDT_0);
@@ -466,7 +464,6 @@ void var_init(void)
 
 	sentA = 0;
 	sentB = 0;
-	reboot_actioned = 0;
 	send_relearn_udp = 0;
 	refresh_gain = 0;
 	
@@ -514,20 +511,20 @@ void var_init(void)
 	}
 	
 	/* Check if the configuration data is invalid and needs defaulting */
-	if ((((CONFIG *)&settings_buffer)->pattern1 != CONFIG_IDENTIFIER1) || (((CONFIG *)&settings_buffer)->pattern2 != CONFIG_IDENTIFIER2) || (!(((CONFIG *)&settings_buffer)->ID)) || (((CONFIG *)&settings_buffer)->ID > 0x8000)) {
+	if ((((CONFIG *)&settings_buffer)->pattern1 != CONFIG_IDENTIFIER1) || (((CONFIG *)&settings_buffer)->pattern2 != CONFIG_IDENTIFIER2)) {
 		xprintf("MultiSense [configuration INVALID]\r\n");
 		
 		/* Re-write default values ready for write-back */
 		((CONFIG *)&settings_buffer)->pattern1 = CONFIG_IDENTIFIER1;
 		((CONFIG *)&settings_buffer)->pattern2 = CONFIG_IDENTIFIER2;
 		strncpy((char *__restrict)(((CONFIG *)&settings_buffer)->name), "MULTISENSE NEEDS CONFIGURING...", sizeof(((CONFIG *)&settings_buffer)->name));
-		((CONFIG *)&settings_buffer)->ID = 0x8000;
+		((CONFIG *)&settings_buffer)->ID = 0x00000000;
 		((CONFIG *)&settings_buffer)->gain_cardA = 0xFF;
 		((CONFIG *)&settings_buffer)->gain_cardB = 0xFF;
 		((CONFIG *)&settings_buffer)->loop_basestation = 0;
 		
 		xprintf("MultiSense [configuration FORMATTED]\r\n");
-		
+
 		/* Write these values back to the EEprom storage area */
 		if (EEprom_settings(settings_buffer, SETTING_STRUCTURE_SIZE, 1) != ERR_NONE) {
 			xprintf("MultiSense [configuration ERROR WRITING]\r\n");
