@@ -43,7 +43,7 @@ static  unsigned char	wbuf[70], mode, storm_holdoff, first;
 void ring_init(unsigned char basestation, unsigned char *mac_raw)
 {
 	int				loop;
-	
+
 	/* set flags to indicate first time boot-up */
 	first = 1;
 	storm_holdoff = 0;
@@ -51,7 +51,7 @@ void ring_init(unsigned char basestation, unsigned char *mac_raw)
 	/* "basestation" parameter determines if this MultiSense unit is a base-station or simple pass-through... */
 	if (basestation) {
 		xprintf("ETHERNET: Set as a base-station to manage Ethernet topology...\r\n");
-		
+
 		/* Enable BPDU tags */
 		writeKSZreg(SPI_KSZ8794_ACCESS_DATA8, 0x00);
 		writeKSZreg(SPI_KSZ8794_ACCESS_DATA7, 0x00);
@@ -65,7 +65,7 @@ void ring_init(unsigned char basestation, unsigned char *mac_raw)
 		writeKSZreg(SPI_KSZ8794_ACCESS_CONTROL0, 0x00);
 		writeKSZreg(SPI_KSZ8794_ACCESS_CONTROL1, 0x00);
 		delay_us(250);
-		
+
 		/* Read back the static MAC table and check that the BPDU enabling is in operation? */
 		writeKSZreg(SPI_KSZ8794_ACCESS_CONTROL0, 0x10);
 		writeKSZreg(SPI_KSZ8794_ACCESS_CONTROL1, 0x00);
@@ -75,13 +75,13 @@ void ring_init(unsigned char basestation, unsigned char *mac_raw)
 		if ((!checkKSZreg(SPI_KSZ8794_ACCESS_DATA8, 0x00)) || (!checkKSZreg(SPI_KSZ8794_ACCESS_DATA7, 0x00)) || (!checkKSZreg(SPI_KSZ8794_ACCESS_DATA6, 0x71)) || (!checkKSZreg(SPI_KSZ8794_ACCESS_DATA5, 0x01)) ||
 	        (!checkKSZreg(SPI_KSZ8794_ACCESS_DATA4, 0x80)) || (!checkKSZreg(SPI_KSZ8794_ACCESS_DATA3, 0xC2)) || (!checkKSZreg(SPI_KSZ8794_ACCESS_DATA2, 0x00)) || (!checkKSZreg(SPI_KSZ8794_ACCESS_DATA1, 0x00)) ||
 		    (!checkKSZreg(SPI_KSZ8794_ACCESS_DATA0, 0x00))) { xprintf("ERROR setting the STATIC MAC table with BPDU for Base-station...\r\n"); }
-				
-		/* Set the local context "mode" to indicate this is in fact a base-station */		
+
+		/* Set the local context "mode" to indicate this is in fact a base-station */
 		mode = 1;
 	}
 	else {
 		xprintf("ETHERNET: normal none-managed pass-through node...\r\n");
-		
+
 		/* Disable BPDU tags */
 		writeKSZreg(SPI_KSZ8794_ACCESS_DATA8, 0x00);
 		writeKSZreg(SPI_KSZ8794_ACCESS_DATA7, 0x00);
@@ -95,8 +95,8 @@ void ring_init(unsigned char basestation, unsigned char *mac_raw)
 		writeKSZreg(SPI_KSZ8794_ACCESS_CONTROL0, 0x00);
 		writeKSZreg(SPI_KSZ8794_ACCESS_CONTROL1, 0x00);
 		delay_us(250);
-		
-		
+
+
 		/* Read back the static MAC table and check that the BPDU disabling is correct and pass-through is in operation */
 		writeKSZreg(SPI_KSZ8794_ACCESS_CONTROL0, 0x10);
 		writeKSZreg(SPI_KSZ8794_ACCESS_CONTROL1, 0x00);
@@ -107,10 +107,10 @@ void ring_init(unsigned char basestation, unsigned char *mac_raw)
 			(!checkKSZreg(SPI_KSZ8794_ACCESS_DATA4, 0x80)) || (!checkKSZreg(SPI_KSZ8794_ACCESS_DATA3, 0xC2)) || (!checkKSZreg(SPI_KSZ8794_ACCESS_DATA2, 0x00)) || (!checkKSZreg(SPI_KSZ8794_ACCESS_DATA1, 0x00)) ||
 			(!checkKSZreg(SPI_KSZ8794_ACCESS_DATA0, 0x00))) { xprintf("ERROR setting the STATIC MAC table with BPDU for pass-through node...\r\n"); }
 
-		/* Set the local context "mode" to indicate this is in fact a pass-though un-configured node */		
+		/* Set the local context "mode" to indicate this is in fact a pass-though un-configured node */
 		mode = 0;
 	}
-	
+
 	/* Bridge DST MAC */
 	wbuf[0] = 0x01;
 	wbuf[1] = 0x80;
@@ -161,9 +161,9 @@ void ring_init(unsigned char basestation, unsigned char *mac_raw)
 	for (loop = 35; loop < 68; loop++) {
 		wbuf[loop] = 0x00;
 	}
-	
+
 	xprintf("ETHERNET: Completed RING management init...\r\n");
-	
+
 	/* If we are a base-station, then send out the first BPDU frame now upon start-up */
 	if (basestation) {																						/* When [BS] switched selected, we are a base-station */
 		mac_async_write(&ETHERNET_MAC_0, (uint8_t *)&wbuf[0], 68);
@@ -180,18 +180,18 @@ void ring_init(unsigned char basestation, unsigned char *mac_raw)
 unsigned char ring_check(unsigned char bpdu_arrived, unsigned char *storm_state, unsigned char *ringbreak)
 {
 	unsigned char	sendrelearn;
-	
+
 	/* Bound-checks and assertions */
 	if (!storm_state) {
 		xprintf("ETHERNET: (!storm_state) ERROR\r\n");
 		return 0;
 	}
-		
+
 	if (!ringbreak) {
 		xprintf("ETHERNET: (!ringbreak) ERROR\r\n");
 		return 0;
 	}
-		
+
 	sendrelearn = 0;
 
 	/* Check which mode we are running, base-station or pass-though? */
@@ -206,14 +206,14 @@ unsigned char ring_check(unsigned char bpdu_arrived, unsigned char *storm_state,
 				/* Clear the learning tables in the SWITCH */
 				writeKSZreg(SPI_KSZ8794_GLOBAL0, 0x2D);
 				delay_us(250);
-				
+
 				writeKSZreg(SPI_KSZ8794_PORT1CONTROL2, 0x06);
 				writeKSZreg(SPI_KSZ8794_PORT2CONTROL2, 0x06);
 
 				/* Set flags to indicate to the main-loop that we have a broken network topology */
 				sendrelearn = 1;
 				*ringbreak = 1;
-				
+
 				xprintf("ETHERNET: [turning Ethernet <B> ON - RING BROKEN]...\r\n");
 			}
 		}
@@ -227,13 +227,13 @@ unsigned char ring_check(unsigned char bpdu_arrived, unsigned char *storm_state,
 				/* Clear the learning tables in the SWITCH */
 				writeKSZreg(SPI_KSZ8794_GLOBAL0, 0x2D);
 				delay_us(250);
-				
+
 				writeKSZreg(SPI_KSZ8794_PORT1CONTROL2, 0x06);
 
 				/* Set flags to indicate to the main-loop that we have a healed and fully looped network topology */
 				sendrelearn = 1;
 				*ringbreak = 0;
-				
+
 				xprintf("ETHERNET: [turning Ethernet <B> OFF - RING HEALED]...\r\n");
 			}
 		}
@@ -243,14 +243,14 @@ unsigned char ring_check(unsigned char bpdu_arrived, unsigned char *storm_state,
 	if (*storm_state) {
 		xprintf("ETHERNET: [storm subsided]...\r\n");
 		*storm_state = 0;
-		
+
 		/* Enable Port 4 Management port back to normal */
 		writeKSZreg(SPI_KSZ8794_PORT4CONTROL2, 0x06);
-		
+
 		/* If we are a basestation, and the storm is in progress, we need to disable port 2 to allow for the packets to stop going round and round */
 		if (mode) {
 			xprintf("ETHERNET: turning Ethernet <B> OFF because of storm - RING HEALING POSSIBILITY]...\r\n");
-				
+
 			/* Disable Port 2 Management port but crucially keep transmitting/receiving BPDUs */
 			writeKSZreg(SPI_KSZ8794_PORT2CONTROL2, 0x01);
 
@@ -260,15 +260,15 @@ unsigned char ring_check(unsigned char bpdu_arrived, unsigned char *storm_state,
 	}
 	else {
 		/* However, if we have no such storm conditions, and we are a base-station, then send the next BPDU out */
-		if (mode) {																										
+		if (mode) {
 			mac_async_write(&ETHERNET_MAC_0, (uint8_t *)&wbuf[0], 68);
 		}
-		
+
 		/* Keep the storm flag de-asserted */
 		storm_holdoff = 0;
 	}
 
 	first = 0;
-	
+
 	return sendrelearn;
 }

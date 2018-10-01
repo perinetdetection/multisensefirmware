@@ -47,7 +47,7 @@ extern void							writeKSZreg(uint16_t, unsigned char);
 /* external global variables list */
 extern unsigned char	            readdata_tempmoisture[4], readdata_water1, readdata_water2, highvoltage;
 extern unsigned char				readenvironment, arp_check, ip_periodic_check, sentA, sentB, reboot_actioned, refresh_gain;
-extern unsigned char		 		settings_buffer[], ring, read_hardware_index;
+extern unsigned char		 		settings_buffer[], ring, read_hardware_index, init_done;
 extern unsigned int				    card_sampleindex;
 extern unsigned char				tamper, cardA_present, cardB_present, cardA_old, cardB_old, good_ethernet, link_port1, link_port2, link_port3, ring_broken;
 extern unsigned char	        	miniIO_A1_adcH, miniIO_A1_adcL, miniIO_A0_adcH, miniIO_A0_adcL, miniIO_A_relay, miniIO_A_inputs;
@@ -223,15 +223,8 @@ void read_boardvalues(void)
 
 	/* If tamper switch is closed and the enclosure lid is correct, then the LEDs do not illuminate. Else show the ETH and PWR LEDs according to the system state */
 	if (tamper) {
-		if (ring_broken == RING_BROKEN) {
-			gpio_toggle_pin_level(PB03_LED_ETH);
-			} else {
-			gpio_set_pin_level(PB03_LED_ETH, (good_ethernet) ? 1 : 0);
-		}
-		
 		gpio_set_pin_level(PB04_LED_PWR, 1);
 	} else {
-		gpio_set_pin_level(PB03_LED_ETH, 0);
 		gpio_set_pin_level(PB04_LED_PWR, 0);
 	}
 
@@ -420,4 +413,6 @@ void read_boardvalues(void)
 	old_link_port1 = link_port1;
 	old_link_port2 = link_port2;
 	old_link_port3 = link_port3;
+	
+	init_done = 1;
 }

@@ -78,7 +78,7 @@ unsigned char						readenvironment, arp_check, ip_periodic_check, sentA, sentB, 
 unsigned char						send_relearn_udp;
 unsigned char						ring_timer;
 unsigned char		 				stormstate;
-unsigned char		 				ring, read_hardware_index;
+unsigned char		 				ring, read_hardware_index, init_done;
 
 unsigned char						plain_buffer[1024];
 unsigned char						cardAch0_samplebuffer[SAMPLE_BUFFER_SIZE];
@@ -92,7 +92,7 @@ unsigned char						cardBch3_samplebuffer;
 unsigned int						card_sampleindex, looprate, loopcount;
 
 unsigned char						settings_buffer[SETTING_STRUCTURE_SIZE], readdata_tempmoisture[4], readdata_water1, readdata_water2, highvoltage, command_dataw[2], command_datar[2];
-unsigned char						tamper, cardA_present, cardB_present, cardA_old, cardB_old, good_ethernet, link_port1, link_port2, link_port3, ring_broken, miniA_chan, miniB_chan;
+unsigned char						tamper, cardA_present, cardB_present, cardA_old, cardB_old, link_port1, link_port2, link_port3, ring_broken, miniA_chan, miniB_chan;
 unsigned char						miniIO_A1_adcH, miniIO_A1_adcL, miniIO_A0_adcH, miniIO_A0_adcL, miniIO_A_relay, miniIO_A_inputs;
 unsigned char						miniIO_B1_adcH, miniIO_B1_adcL, miniIO_B0_adcH, miniIO_B0_adcL, miniIO_B_relay, miniIO_B_inputs;
 unsigned char						old_tamper, old_link_port1, old_link_port2, old_link_port3;
@@ -174,10 +174,28 @@ void TIMER_0_task1_cb(const struct timer_task *const timer_task)
 		looprate = loopcount;
 		loopcount = 0;
 	}
-
-	/* If the "good_ethernet" counter was set, then this decrements it in 1/10ths of a second, such that after 25 seconds, if not packet activity, the [LED_ETH] turns off */
-	if (good_ethernet) {
-		good_ethernet--;
+	
+	/* If tamper switch is closed and the enclosure lid is correct, then the LEDs do not illuminate. Else show the ETH and PWR LEDs according to the system state */
+	if ((tamper) && (init_done) && (((CONFIG *)&settings_buffer)->ID > 0x00000000)) {
+		if ((link_port1 + link_port2 + link_port3) == 0) {
+			gpio_set_pin_level(PB03_LED_ETH, 0);
+		} else if ((link_port1 + link_port2 + link_port3) == 1) {
+			if (!(tick_counter & 0x03)) {
+				gpio_set_pin_level(PB03_LED_ETH, 1);
+			} else {
+				gpio_set_pin_level(PB03_LED_ETH, 0);
+			}
+		} else if ((link_port1 + link_port2 + link_port3) == 2) {
+			if (tick_counter & 0x03) {
+				gpio_set_pin_level(PB03_LED_ETH, 1);
+			} else {
+				gpio_set_pin_level(PB03_LED_ETH, 0);
+			}
+		} else {
+			gpio_set_pin_level(PB03_LED_ETH, 1);
+		}
+	} else {
+		gpio_set_pin_level(PB03_LED_ETH, 0);
 	}
 }
 
@@ -193,9 +211,6 @@ void application_udp_appcall(void)
 
 	/* If the uIP stack signals that we have a new UDPmpacket RX, then execute next block of code */
 	if (uip_newdata()) {
-		/* Keep the "good_ethernet" counter topped up */
-		good_ethernet = 255;
-
 		/* Found out how much payload data we have in the UDP packet */
 		len = uip_datalen();
 
@@ -308,7 +323,7 @@ void application_udp_appcall(void)
 				writeKSZreg(SPI_KSZ8794_PORT2CONTROL2, 0x07);
 
 				/* Clear the learning tables in the SWITCH */
-				writeKSZreg(SPI_KSZ8794_GLOBAL0, 0x2D);
+				writeKSZreg(SPI_KSZ8794_GLOBAL0, 0x6D);
 				delay_us(250);
 
 				/* Once cleared, turn off learnign state for ports 1 and 2 */
@@ -577,11 +592,12 @@ int main_loop(void)
 				}
 
 				/* If incoming frame is a BPDU with the correct identifiers etc then... */
-				if ((uip_len == 68) && (uip_buf[0] == 0x01) && (uip_buf[1] == 0x80) && (uip_buf[2] == 0xC2) && (uip_buf[3] == 0x00) && (uip_buf[4] == 0x00) && (uip_buf[5] == 0x00) && (uip_buf[6] == 0x01) &&
+				if ((uip_len == 72) && (uip_buf[0] == 0x01) && (uip_buf[1] == 0x80) && (uip_buf[2] == 0xC2) && (uip_buf[3] == 0x00) && (uip_buf[4] == 0x00) && (uip_buf[5] == 0x00) && (uip_buf[6] == 0x01) &&
 				(uip_buf[7] == 0x80) && (uip_buf[8] == 0xC2) && (uip_buf[9] == 0x00) && (uip_buf[10] == 0x00) && (uip_buf[11] == 0x01) && (*((unsigned short int *)&(uip_buf[12])) == 0x01E0) &&
 				(uip_buf[29] == mac_raw[0]) && (uip_buf[30] == mac_raw[1]) && (uip_buf[31] == mac_raw[2]) && (uip_buf[32] == mac_raw[3]) && (uip_buf[33] == mac_raw[4]) && (uip_buf[34] == mac_raw[5])) {
 					/* We have received a BPDU frame */
 					bpdu_arrived = 1;
+					xprintf("BPDU = 1\r\n");
 				} else {
 					/* Normal frame arrived */
 					if (ETH_BUF->type == htons(UIP_ETHTYPE_IP)) {
@@ -616,6 +632,12 @@ int main_loop(void)
 					writeKSZreg(SPI_KSZ8794_PORT4CONTROL2, 0x00);
 					stormstate = 1;
 					broadcast_storm = 1;
+					
+					while (mac_async_read_len(&ETHERNET_MAC_0) > 0) {
+						mac_async_read(&ETHERNET_MAC_0, (uint8_t *)&uip_buf[0], sizeof(uip_buf));
+					}
+					
+					continue;
 				}
 			}
 			else if (!stormstate) {
@@ -916,6 +938,7 @@ int main_loop(void)
 				xprintf("<CLI DEBUG> [REBOOT] command\r\n");
 				xprintf(". . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .\r\n\r\n");
 
+				delay_ms(250);
 				_reset_mcu();
 				break;
 
@@ -962,7 +985,8 @@ int main_loop(void)
 					xprintf("MultiSense [configuration WRITTEN]\r\n");
 				}
 				
-				xprintf("Rebooting...\r\n");
+				xprintf("\r\r\rRebooting...\r\n");
+				delay_ms(250);
 				_reset_mcu();
 				break;
 
@@ -982,7 +1006,9 @@ int main_loop(void)
 					xprintf("MultiSense [configuration WRITTEN]\r\n");
 				}
 				
-				xprintf(". . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .\r\n\r\n");
+				xprintf("\r\r\rRebooting...\r\n");
+				delay_ms(250);
+				_reset_mcu();
 				break;
 
 				case 'p':
@@ -1001,7 +1027,9 @@ int main_loop(void)
 					xprintf("MultiSense [configuration WRITTEN]\r\n");
 				}
 				
-				xprintf(". . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .\r\n\r\n");
+				xprintf("\r\r\rRebooting...\r\n");
+				delay_ms(250);
+				_reset_mcu();
 				break;
 
 				case 'l':
@@ -1086,6 +1114,106 @@ int main_loop(void)
 				xprintf("<CLI DEBUG> Main-loop/Sampling = %d\r\n", looprate);
 				xprintf(". . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .\r\n\r\n");
 				break;
+				
+				case 'm':
+				case 'M':
+				/* [READ MICREL REGISTERS] command */
+				xprintf("\r\n. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .\r\n");
+				xprintf("\r\n");
+				xprintf("<CLI DEBUG> [READ MICREL REGISTERS] command");
+				xprintf("\r\n");
+				xprintf("FAMILY_ID = %x\r\n", readKSZreg(SPI_KSZ8794_FAMILY_ID));
+				xprintf("START = %x\r\n", readKSZreg(SPI_KSZ8794_START));
+				xprintf("GLOBAL0 = %x\r\n", readKSZreg(SPI_KSZ8794_GLOBAL0));
+				xprintf("GLOBAL1 = %x\r\n", readKSZreg(SPI_KSZ8794_GLOBAL1));
+				xprintf("GLOBAL2 = %x\r\n", readKSZreg(SPI_KSZ8794_GLOBAL2));
+				xprintf("GLOBAL3 = %x\r\n", readKSZreg(SPI_KSZ8794_GLOBAL3));
+				xprintf("GLOBAL4 = %x\r\n", readKSZreg(SPI_KSZ8794_GLOBAL4));
+				xprintf("GLOBAL5 = %x\r\n", readKSZreg(SPI_KSZ8794_GLOBAL5));
+				xprintf("GLOBAL6 = %x\r\n", readKSZreg(SPI_KSZ8794_GLOBAL6));
+				xprintf("GLOBAL9 = %x\r\n", readKSZreg(SPI_KSZ8794_GLOBAL9));
+				xprintf("GLOBAL10 = %x\r\n", readKSZreg(SPI_KSZ8794_GLOBAL10));
+				xprintf("PDMC1 = %x\r\n", readKSZreg(SPI_KSZ8794_PDMC1));
+				xprintf("PDMC2 = %x\r\n", readKSZreg(SPI_KSZ8794_PDMC2));
+				xprintf("PORT1CONTROL0 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT1CONTROL0));
+				xprintf("PORT2CONTROL0 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT2CONTROL0));
+				xprintf("PORT3CONTROL0 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT3CONTROL0));	
+				xprintf("PORT4CONTROL0 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT4CONTROL0));
+				xprintf("PORT1CONTROL1 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT1CONTROL1));	
+				xprintf("PORT2CONTROL1 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT2CONTROL1));
+				xprintf("PORT3CONTROL1 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT3CONTROL1));
+				xprintf("PORT4CONTROL1 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT4CONTROL1));	
+				xprintf("PORT1CONTROL2 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT1CONTROL2));
+				xprintf("PORT2CONTROL2 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT2CONTROL2));
+				xprintf("PORT3CONTROL2 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT3CONTROL2));
+				xprintf("PORT4CONTROL2 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT4CONTROL2));
+				xprintf("PORT1CONTROL3 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT1CONTROL3));
+				xprintf("PORT2CONTROL3 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT2CONTROL3));
+				xprintf("PORT3CONTROL3 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT3CONTROL3));
+				xprintf("PORT4CONTROL3 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT4CONTROL3));
+				xprintf("PORT1CONTROL4 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT1CONTROL4));
+				xprintf("PORT2CONTROL4 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT2CONTROL4));
+				xprintf("PORT3CONTROL4 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT3CONTROL4));
+				xprintf("PORT4CONTROL4 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT4CONTROL4));
+				xprintf("PORT1CONTROL5 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT1CONTROL5));
+				xprintf("PORT2CONTROL5 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT2CONTROL5));
+				xprintf("PORT3CONTROL5 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT3CONTROL5));
+				xprintf("PORT4CONTROL5 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT4CONTROL5));
+				xprintf("PORT4CONTROL6 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT4CONTROL6));
+				xprintf("PORT1CONTROL7 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT1CONTROL7));
+				xprintf("PORT2CONTROL7 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT2CONTROL7));
+				xprintf("PORT3CONTROL7 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT3CONTROL7));
+				xprintf("PORT1CONTROL8 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT1CONTROL8));
+				xprintf("PORT2CONTROL8 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT2CONTROL8));
+				xprintf("PORT3CONTROL8 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT3CONTROL8));
+				xprintf("PORT1STATUS0 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT1STATUS0));
+				xprintf("PORT2STATUS0 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT2STATUS0));
+				xprintf("PORT3STATUS0 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT3STATUS0));
+				xprintf("PORT1STATUS1 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT1STATUS1));
+				xprintf("PORT2STATUS1 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT2STATUS1));
+				xprintf("PORT3STATUS1 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT3STATUS1));
+				xprintf("PORT1STATUS2 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT1STATUS2));
+				xprintf("PORT2STATUS2 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT2STATUS2));
+				xprintf("PORT3STATUS2 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT3STATUS2));
+				xprintf("PORT1STATUS3 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT1STATUS3));
+				xprintf("PORT2STATUS3 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT2STATUS3));
+				xprintf("PORT3STATUS3 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT3STATUS3));
+				xprintf("PORT1LINKMD = %x\r\n", readKSZreg(SPI_KSZ8794_PORT1LINKMD));
+				xprintf("PORT2LINKMD = %x\r\n", readKSZreg(SPI_KSZ8794_PORT2LINKMD));
+				xprintf("PORT3LINKMD = %x\r\n", readKSZreg(SPI_KSZ8794_PORT3LINKMD));
+				xprintf("PORT1CONTROL9 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT1CONTROL9));
+				xprintf("PORT2CONTROL9 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT2CONTROL9));
+				xprintf("PORT3CONTROL9 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT3CONTROL9));
+				xprintf("PORT1CONTROL10 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT1CONTROL10));
+				xprintf("PORT2CONTROL10 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT2CONTROL10));
+				xprintf("PORT3CONTROL10 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT3CONTROL10));
+				xprintf("PORT2CONTROL20 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT2CONTROL20));
+				xprintf("PORT1CONTROL12 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT1CONTROL12));
+				xprintf("PORT2CONTROL12 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT2CONTROL12));
+				xprintf("PORT3CONTROL12 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT3CONTROL12));
+				xprintf("PORT4CONTROL12 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT4CONTROL12));
+				xprintf("PORT1CONTROL13 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT1CONTROL13));
+				xprintf("PORT2CONTROL13 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT2CONTROL13));
+				xprintf("PORT3CONTROL13 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT3CONTROL13));
+				xprintf("PORT4CONTROL13 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT4CONTROL13));
+				xprintf("PORT1CONTROL14 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT1CONTROL14));
+				xprintf("PORT2CONTROL14 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT2CONTROL14));
+				xprintf("PORT3CONTROL14 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT3CONTROL14));
+				xprintf("PORT4CONTROL14 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT4CONTROL14));
+				xprintf("PORT1CONTROL15 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT1CONTROL15));
+				xprintf("PORT2CONTROL15 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT2CONTROL15));
+				xprintf("PORT3CONTROL15 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT3CONTROL15));
+				xprintf("PORT4CONTROL15 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT4CONTROL15));
+				xprintf("PORT1CONTROL16 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT1CONTROL16));
+				xprintf("PORT2CONTROL16 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT2CONTROL16));
+				xprintf("PORT3CONTROL16 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT3CONTROL16));
+				xprintf("PORT4CONTROL16 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT4CONTROL16));
+				xprintf("PORT1CONTROL17 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT1CONTROL17));
+				xprintf("PORT2CONTROL17 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT2CONTROL17));
+				xprintf("PORT3CONTROL17 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT3CONTROL17)); 
+				xprintf("PORT4CONTROL17 = %x\r\n", readKSZreg(SPI_KSZ8794_PORT4CONTROL17));
+				xprintf(". . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .\r\n\r\n");
+				break;
 
 				/* All unrecognized command key-strokes dealt with here (with a HELP screen included) */
 				default:
@@ -1097,6 +1225,7 @@ int main_loop(void)
 				xprintf("B         [BASESTATION] command\r\n");
 				xprintf("P         [PASS THROUGH] command\r\n");
 				xprintf("L         [LIVE BOARD PRINT] command\r\n");
+				xprintf("M         [READ MICREL REGISTERS] command\r\n");
 				xprintf("I         [IP SCHEME / NETWORK] command\r\n");
 				xprintf("S         [SPEED MAINLOOP] command\r\n\r\n");
 				xprintf(". . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .\r\n\r\n");
@@ -1139,6 +1268,8 @@ int main(void)
 	unsigned char	ID_string[9];
 	unsigned int	new_id;
 			
+	init_done = 0;
+				
 	/* Initialize the lower-level Atmel drivers, hardware and HAL interface */
 	atmel_start_init();
 
@@ -1208,6 +1339,9 @@ int main(void)
 			ID_index = 0;
 					
 			while (1) {
+				gpio_set_pin_level(PB04_LED_PWR, 1);
+				delay_ms(100);
+				gpio_set_pin_level(PB04_LED_PWR, 0);
 				delay_ms(100);
 				
 				if (io_read((struct io_descriptor *const)io, (uint8_t *const)&ch, 1)) {
@@ -1217,7 +1351,7 @@ int main(void)
 						continue;
 					}
 				
-					if ((unsigned char)ch == 13) {
+					if (((unsigned char)ch == 13) && (ID_index)) {
 						break;
 					}
 				
@@ -1264,11 +1398,17 @@ int main(void)
 							xprintf("MultiSense [configuration WRITTEN]\r\n");
 						}
 									
-						xprintf("\r\nRebooting...(please wait)\r\n\r\n");
+						xprintf("\r\n\r\r\rRebooting...(please wait)\r\n\r\n");
+						delay_ms(250);
 					   _reset_mcu();
 					} else if (((unsigned char)ch == 'n') || ((unsigned char)ch == 'N')) {
 						break;
 					}
+				} else {
+					delay_ms(100);
+					gpio_set_pin_level(PB04_LED_PWR, 1);
+					delay_ms(100);
+					gpio_set_pin_level(PB04_LED_PWR, 0);
 				}
 			}
 		}

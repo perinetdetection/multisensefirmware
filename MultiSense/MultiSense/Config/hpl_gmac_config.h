@@ -12,7 +12,7 @@
 // <i> Connects GTX to GRX, GTXEN to GRXDV and forces full duplex mode.
 // <id> gmac_arch_ncr_lbl
 #ifndef CONF_GMAC_NCR_LBL
-#define CONF_GMAC_NCR_LBL 1
+#define CONF_GMAC_NCR_LBL 0
 #endif
 
 // <q> Management Port Enable

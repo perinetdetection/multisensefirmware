@@ -42,7 +42,7 @@ extern unsigned char				ring_timer;
 extern unsigned char		 		stormstate;
 extern unsigned char		 		settings_buffer[], ring, read_hardware_index;
 extern unsigned int				    card_sampleindex, looprate, loopcount;
-extern unsigned char				tamper, cardA_present, cardB_present, cardA_old, cardB_old, good_ethernet, link_port1, link_port2, link_port3, ring_broken, miniA_chan, miniB_chan;
+extern unsigned char				tamper, cardA_present, cardB_present, cardA_old, cardB_old, link_port1, link_port2, link_port3, ring_broken, miniA_chan, miniB_chan;
 extern unsigned char	        	miniIO_A1_adcH, miniIO_A1_adcL, miniIO_A0_adcH, miniIO_A0_adcL, miniIO_A_relay, miniIO_A_inputs;
 extern unsigned char			    miniIO_B1_adcH, miniIO_B1_adcL, miniIO_B0_adcH, miniIO_B0_adcL, miniIO_B_relay, miniIO_B_inputs;
 extern unsigned char                old_tamper, old_link_port1, old_link_port2, old_link_port3;
@@ -142,7 +142,7 @@ void switch_init(void)
 	gpio_set_pin_level(PB00_KSZ_RESET, 1);
 	delay_ms(10);
 	gpio_set_pin_level(PB00_KSZ_RESET, 0);
-	delay_ms(10);
+	delay_ms(100);
 	gpio_set_pin_level(PB00_KSZ_RESET, 1);
 }
 
@@ -168,11 +168,7 @@ void switch_configure(void)
 	delay_us(50);
 	
 	if (!checkKSZreg(SPI_KSZ8794_GLOBAL0, 0x0D))		{ xprintf("[SPI_KSZ8794_GLOBAL0] not correct\r\n"); }
-	
-	writeKSZreg(SPI_KSZ8794_GLOBAL1, 0x0C);
-	delay_us(50);
-	
-	if (!checkKSZreg(SPI_KSZ8794_GLOBAL1, 0x0C))		{ xprintf("[SPI_KSZ8794_GLOBAL1] not correct\r\n"); }
+	if (!checkKSZreg(SPI_KSZ8794_GLOBAL1, 0x04))		{ xprintf("[SPI_KSZ8794_GLOBAL1] not correct\r\n"); }
 	
 	writeKSZreg(SPI_KSZ8794_GLOBAL2, 0xB2);
 	delay_us(50);
@@ -231,7 +227,11 @@ void switch_configure(void)
 	if (!checkKSZreg(SPI_KSZ8794_PORT2CONTROL5, 0x00))	{ xprintf("[SPI_KSZ8794_PORT2CONTROL5] not correct\r\n"); }
 	if (!checkKSZreg(SPI_KSZ8794_PORT3CONTROL5, 0x00))	{ xprintf("[SPI_KSZ8794_PORT3CONTROL5] not correct\r\n"); }
 	if (!checkKSZreg(SPI_KSZ8794_PORT4CONTROL5, 0x00))	{ xprintf("[SPI_KSZ8794_PORT4CONTROL5] not correct\r\n"); }
-	if (!checkKSZreg(SPI_KSZ8794_PORT4CONTROL6, 0x28))	{ xprintf("[SPI_KSZ8794_PORT4CONTROL6] not correct\r\n"); }
+		
+	writeKSZreg(SPI_KSZ8794_PORT4CONTROL6, 0x20);
+	delay_us(50);
+	
+	if (!checkKSZreg(SPI_KSZ8794_PORT4CONTROL6, 0x20))	{ xprintf("[SPI_KSZ8794_PORT4CONTROL6] not correct\r\n"); }
 	if (!checkKSZreg(SPI_KSZ8794_PORT1CONTROL7, 0x3F))	{ xprintf("[SPI_KSZ8794_PORT1CONTROL7] not correct\r\n"); }
 	if (!checkKSZreg(SPI_KSZ8794_PORT2CONTROL7, 0x3F))	{ xprintf("[SPI_KSZ8794_PORT2CONTROL7] not correct\r\n"); }
 	if (!checkKSZreg(SPI_KSZ8794_PORT3CONTROL7, 0x3F))	{ xprintf("[SPI_KSZ8794_PORT3CONTROL7] not correct\r\n"); }
@@ -307,7 +307,7 @@ void address_configure(void)
 	uip_setethaddr(macaddress);
 		
 	/* Start the main internal on-chip Ethernet MAC for the frames */
-	mac_async_set_filter_ex(&ETHERNET_MAC_0, mac_raw);
+	//mac_async_set_filter_ex(&ETHERNET_MAC_0, mac_raw);
 	mac_async_enable(&ETHERNET_MAC_0);
 	
 	uip_ipaddr(&ipaddr, 192, 168, (uint8_t)((((CONFIG *)&settings_buffer)->ID) / 250), 1 + (uint8_t)((((CONFIG *)&settings_buffer)->ID) % 250));
@@ -429,6 +429,7 @@ void gpio_init(void)
 	gpio_set_pin_level(PC28_CARDA_I2C_CLK, 0);
 	gpio_set_pin_level(PB12_SPI_MOSI, 1);
 	gpio_set_pin_level(PB15_SPI_CLK, 1);
+	gpio_set_pin_level(PB00_KSZ_RESET, 1);
 }
 	
 // *****************************************************************************************************************************************************************
@@ -470,7 +471,6 @@ void var_init(void)
 	cardA_old = 0;
 	cardB_old = 0;
 	card_sampleindex = 0;
-	good_ethernet = 0;
 	stormstate = 0;
 	link_port1 = 0;
 	link_port2 = 0;
