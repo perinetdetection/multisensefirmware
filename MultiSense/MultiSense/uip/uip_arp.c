@@ -181,27 +181,28 @@ uip_arp_update(u16_t *ipaddr, struct uip_eth_addr *ethaddr)
  * variable uip_len.
  */
 /*-----------------------------------------------------------------------------------*/
-#if 0
 void
 uip_arp_ipin(void)
 {
   uip_len -= sizeof(struct uip_eth_hdr);
-	
+	  
   /* Only insert/update an entry if the source IP address of the
      incoming IP packet comes from a host on the local network. */
   if((IPBUF->srcipaddr[0] & uip_netmask[0]) !=
      (uip_hostaddr[0] & uip_netmask[0])) {
+
     return;
   }
   if((IPBUF->srcipaddr[1] & uip_netmask[1]) !=
      (uip_hostaddr[1] & uip_netmask[1])) {
+
     return;
   }
+
   uip_arp_update(IPBUF->srcipaddr, &(IPBUF->ethhdr.src));
-  
   return;
 }
-#endif /* 0 */
+
 /*-----------------------------------------------------------------------------------*/
 /**
  * ARP processing for incoming ARP packets.

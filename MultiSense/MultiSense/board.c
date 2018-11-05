@@ -52,7 +52,7 @@ extern unsigned int				    card_sampleindex;
 extern unsigned char				tamper, cardA_present, cardB_present, cardA_old, cardB_old, good_ethernet, link_port1, link_port2, link_port3, ring_broken;
 extern unsigned char	        	miniIO_A1_adcH, miniIO_A1_adcL, miniIO_A0_adcH, miniIO_A0_adcL, miniIO_A_relay, miniIO_A_inputs;
 extern unsigned char			    miniIO_B1_adcH, miniIO_B1_adcL, miniIO_B0_adcH, miniIO_B0_adcL, miniIO_B_relay, miniIO_B_inputs;
-extern unsigned char                old_tamper, old_link_port1, old_link_port2, old_link_port3;
+extern unsigned char                old_tamper, old_link_port1, old_link_port2, old_link_port3, temp_failure_flag;
 extern CARD_TYPE					cardA_type, cardB_type;
 extern struct io_descriptor		   *io;
 
@@ -208,9 +208,14 @@ void read_boardvalues(void)
 	} else {
 		/* Read the I2C for the dual temp & moisture IC. If bad result(s) write error debug and set variables to 0xFF */
 		if ((err = I2C_getTEMPandMOISTURE(PB24_CARDB_I2C_SDA,  PB25_CARDB_I2C_CLK, &readdata_tempmoisture[0], &readdata_tempmoisture[1], &readdata_tempmoisture[2], &readdata_tempmoisture[3]) < 0)) {
-			xprintf("Could NOT read from the moisture & temp sensor on CARDB:I2C [%i]\r\n", err);
-		
-			memset(&readdata_tempmoisture, 0xFF, 4);
+			if (!temp_failure_flag) {
+				xprintf("Could NOT read from the moisture & temp sensor on CARDB:I2C [%i]\r\n", err);
+				memset(&readdata_tempmoisture, 0xFF, 4);
+			}
+			
+			temp_failure_flag = 1;
+		} else {
+			temp_failure_flag = 0;
 		}
 		
 		read_hardware_index = 0;
@@ -241,16 +246,25 @@ void read_boardvalues(void)
 	/* Detect change of status for debug */
 	if (link_port1 != old_link_port1) {
 		xprintf("Left Ethernet [%s]\r\n", (link_port1) ? "GOOD" : "LINKDOWN");
+		
+		/* Clear the learning tables in the SWITCH */
+		writeKSZreg(SPI_KSZ8794_GLOBAL0, 0x2C);
 	}
 
 	/* Detect change of status for debug */
 	if (link_port2 != old_link_port2) {
 		xprintf("Right Ethernet [%s]\r\n", (link_port2) ? "GOOD" : "LINKDOWN");
+		
+		/* Clear the learning tables in the SWITCH */
+		writeKSZreg(SPI_KSZ8794_GLOBAL0, 0x2C);
 	}
 
 	/* Detect change of status for debug */
 	if (link_port3 != old_link_port3) {
 		xprintf("Power & Ethernet <Comms Link> [%s]\r\n", (link_port3) ? "GOOD" : "DOWN");
+		
+		/* Clear the learning tables in the SWITCH */
+		writeKSZreg(SPI_KSZ8794_GLOBAL0, 0x2C);
 	}
 
 	/* Detect change of status of Slot [A] daughter-card */

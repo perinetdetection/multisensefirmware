@@ -250,7 +250,6 @@ uip_ipchksum(void)
   u16_t sum;
 
   sum = chksum(0, &uip_buf[UIP_LLH_LEN], UIP_IPH_LEN);
-  DEBUG_PRINTF("uip_ipchksum: sum 0x%04x\n", sum);
   return (sum == 0) ? 0xffff : htons(sum);
 }
 #endif
@@ -818,11 +817,11 @@ uip_process(u8_t flag)
 #endif /* UIP_REASSEMBLY */
   }
 #endif /* UIP_CONF_IPV6 */
-
   if(uip_ipaddr_cmp(uip_hostaddr, all_zeroes_addr)) {
     /* If we are configured to use ping IP address configuration and
        hasn't been assigned an IP address yet, we accept all ICMP
        packets. */
+
 #if UIP_PINGADDRCONF && !UIP_CONF_IPV6
     if(BUF->proto == UIP_PROTO_ICMP) {
       UIP_LOG("ip: possible ping config packet received.");
@@ -837,7 +836,6 @@ uip_process(u8_t flag)
     /* If IP broadcast support is configured, we check for a broadcast
        UDP packet, which may be destined to us. */
 #if UIP_BROADCAST
-    DEBUG_PRINTF("UDP IP checksum 0x%04x\n", uip_ipchksum());
     if(BUF->proto == UIP_PROTO_UDP &&
        uip_ipaddr_cmp(BUF->destipaddr, all_ones_addr)
        /*&&
@@ -940,10 +938,6 @@ uip_process(u8_t flag)
 
   /* End of IPv4 input header processing code. */
 #else /* !UIP_CONF_IPV6 */
-
-  /* This is IPv6 ICMPv6 processing code. */
-  DEBUG_PRINTF("icmp6_input: length %d\n", uip_len);
-
   if(BUF->proto != UIP_PROTO_ICMP6) { /* We only allow ICMPv6 packets from
 					 here. */
     UIP_STAT(++uip_stat.ip.drop);
@@ -997,7 +991,6 @@ uip_process(u8_t flag)
     UIP_STAT(++uip_stat.icmp.sent);
     goto send;
   } else {
-    DEBUG_PRINTF("Unknown icmp6 message type %d\n", ICMPBUF->type);
     UIP_STAT(++uip_stat.icmp.drop);
     UIP_STAT(++uip_stat.icmp.typeerr);
     UIP_LOG("icmp: unknown ICMP message.");
@@ -1790,14 +1783,10 @@ uip_process(u8_t flag)
   /* Calculate IP checksum. */
   BUF->ipchksum = 0;
   BUF->ipchksum = ~(uip_ipchksum());
-  DEBUG_PRINTF("uip ip_send_nolen: chkecum 0x%04x\n", uip_ipchksum());
 #endif /* UIP_CONF_IPV6 */
    
   UIP_STAT(++uip_stat.tcp.sent);
  send:
-  DEBUG_PRINTF("Sending packet with length %d (%d)\n", uip_len,
-	       (BUF->len[0] << 8) | BUF->len[1]);
-  
   UIP_STAT(++uip_stat.ip.sent);
   /* Return and let the caller do the actual transmission. */
   uip_flags = 0;

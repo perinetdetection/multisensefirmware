@@ -110,7 +110,6 @@ typedef uip_ip4addr_t uip_ipaddr_t;
  */
 #define uip_setnetmask(addr) uip_ipaddr_copy(uip_netmask, (addr))
 
-
 /**
  * Get the default router's IP address.
  *

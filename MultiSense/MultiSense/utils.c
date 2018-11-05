@@ -131,6 +131,8 @@ unsigned char readKSZreg(uint16_t reg)
 // *****************************************************************************************************************************************************************
 void writeKSZreg(uint16_t reg, unsigned char value)
 {
+	int count, loop;
+			
 	/* Lower the nCS line for this SPI device */
 	gpio_set_pin_level(PB07_SPInCS_KSZ8974, 0);
 	
@@ -139,8 +141,13 @@ void writeKSZreg(uint16_t reg, unsigned char value)
 	command_dataw[1] = (unsigned char)(reg & 0x7F) << 1;
 	command_dataw[2] = value;
 	
-	/* Perform the actual 3-byte push/pull SPI operation */
-	bash_spi_transfer(command_dataw, command_datar, 3);
+	for (count = 0; count < 3; count++) {
+		for (loop = 8; loop; loop--) {
+			gpio_set_pin_level(PB12_SPI_MOSI, (command_dataw[count] & (1 << (loop - 1))) ? 1 : 0);
+			gpio_set_pin_level(PB15_SPI_CLK, 0);
+			gpio_set_pin_level(PB15_SPI_CLK, 1);
+		}
+	}
 	
 	/* Raise the nCS line for this SPI device */
 	gpio_set_pin_level(PB07_SPInCS_KSZ8974, 1);

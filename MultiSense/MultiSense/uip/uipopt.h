@@ -33,7 +33,7 @@
  * settings statically, but only if UIP_FIXEDADDR is set to 1. The
  * configuration options for a specific node includes IP address,
  * netmask and default router as well as the Ethernet address. The
- * netmask, default router and Ethernet address are appliciable only
+ * netmask, default router and Ethernet address are applicable only
  * if uIP should be run over Ethernet.
  *
  * All of these should be changed to suit your project.
@@ -65,7 +65,7 @@
 #ifdef UIP_CONF_PINGADDRCONF
 #define UIP_PINGADDRCONF UIP_CONF_PINGADDRCONF
 #else /* UIP_CONF_PINGADDRCONF */
-#define UIP_PINGADDRCONF 0
+#define UIP_PINGADDRCONF 1
 #endif /* UIP_CONF_PINGADDRCONF */
 
 
@@ -132,7 +132,7 @@
 #ifdef UIP_CONF_UDP
 #define UIP_UDP UIP_CONF_UDP
 #else /* UIP_CONF_UDP */
-#define UIP_UDP           0
+#define UIP_UDP           1
 #endif /* UIP_CONF_UDP */
 
 /**
@@ -146,7 +146,7 @@
 #ifdef UIP_CONF_UDP_CHECKSUMS
 #define UIP_UDP_CHECKSUMS UIP_CONF_UDP_CHECKSUMS
 #else
-#define UIP_UDP_CHECKSUMS 0
+#define UIP_UDP_CHECKSUMS 1
 #endif
 
 /**
@@ -179,7 +179,7 @@
  * compiled in.
  *
  * If the applications that are running on top of uIP for this project
- * do not need to open outgoing TCP connections, this configration
+ * do not need to open outgoing TCP connections, this configuration
  * option can be turned off to reduce the code size of uIP.
  *
  * \hideinitializer
@@ -374,7 +374,7 @@
  *
  */
 #ifndef UIP_CONF_BROADCAST
-#define UIP_BROADCAST 0
+#define UIP_BROADCAST 1
 #else /* UIP_CONF_BROADCAST */
 #define UIP_BROADCAST UIP_CONF_BROADCAST
 #endif /* UIP_CONF_BROADCAST */

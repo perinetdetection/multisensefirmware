@@ -35,7 +35,7 @@ extern void							usb_device_cb_state_c(void);
 
 /* external global variables list */
 extern unsigned int					tick_counter;
-extern unsigned char				readenvironment, arp_check, ip_periodic_check, sentA, sentB, reboot_actioned, refresh_gain;
+extern unsigned char				readenvironment, arp_check, sentA, sentB, reboot_actioned, refresh_gain;
 extern unsigned char	            readdata_tempmoisture[4], readdata_water1, readdata_water2, highvoltage;
 extern unsigned char				send_relearn_udp;
 extern unsigned char				ring_timer;
@@ -45,7 +45,7 @@ extern unsigned int				    card_sampleindex, looprate, loopcount;
 extern unsigned char				tamper, cardA_present, cardB_present, cardA_old, cardB_old, link_port1, link_port2, link_port3, ring_broken, miniA_chan, miniB_chan;
 extern unsigned char	        	miniIO_A1_adcH, miniIO_A1_adcL, miniIO_A0_adcH, miniIO_A0_adcL, miniIO_A_relay, miniIO_A_inputs;
 extern unsigned char			    miniIO_B1_adcH, miniIO_B1_adcL, miniIO_B0_adcH, miniIO_B0_adcL, miniIO_B_relay, miniIO_B_inputs;
-extern unsigned char                old_tamper, old_link_port1, old_link_port2, old_link_port3;
+extern unsigned char                old_tamper, old_link_port1, old_link_port2, old_link_port3, temp_failure_flag;
 extern CARD_TYPE					cardA_type, cardB_type;
 extern struct spi_xfer				p_xfer;
 extern struct uip_eth_addr			macaddress;
@@ -155,25 +155,20 @@ void switch_init(void)
 void switch_configure(void)
 {
 	xprintf("Configuring and checking the SPI KSZ8794 Ethernet SWITCH registers...\r\n");
+	
 	/* Write set-up commands to the KSZ Ethernet SWITCH via SPI bus */
 	if (!checkKSZreg(SPI_KSZ8794_FAMILY_ID, 0x87))		{ xprintf("[SPI_KSZ8794_FAMILY_ID] not correct\r\n"); }
 		
 	/* Stop the Ethernet SWITCH operation */
 	writeKSZreg(SPI_KSZ8794_START, 0x00);
+	writeKSZreg(SPI_KSZ8794_GLOBAL2, 0xB0);
+	writeKSZreg(SPI_KSZ8794_GLOBAL6, 0x80);
 	delay_us(50);
 	
 	if (!checkKSZreg(SPI_KSZ8794_START, 0x60))			{ xprintf("[SPI_KSZ8794_START first] not correct\r\n"); }
-	
-	writeKSZreg(SPI_KSZ8794_GLOBAL0, 0x0D);
-	delay_us(50);
-	
-	if (!checkKSZreg(SPI_KSZ8794_GLOBAL0, 0x0D))		{ xprintf("[SPI_KSZ8794_GLOBAL0] not correct\r\n"); }
+	if (!checkKSZreg(SPI_KSZ8794_GLOBAL0, 0x0C))		{ xprintf("[SPI_KSZ8794_GLOBAL0] not correct\r\n"); }
 	if (!checkKSZreg(SPI_KSZ8794_GLOBAL1, 0x04))		{ xprintf("[SPI_KSZ8794_GLOBAL1] not correct\r\n"); }
-	
-	writeKSZreg(SPI_KSZ8794_GLOBAL2, 0xB2);
-	delay_us(50);
-	
-	if (!checkKSZreg(SPI_KSZ8794_GLOBAL2, 0xB2))		{ xprintf("[SPI_KSZ8794_GLOBAL2] not correct\r\n"); }
+	if (!checkKSZreg(SPI_KSZ8794_GLOBAL2, 0xB0))		{ xprintf("[SPI_KSZ8794_GLOBAL2] not correct\r\n"); }
 	if (!checkKSZreg(SPI_KSZ8794_GLOBAL3, 0x00))		{ xprintf("[SPI_KSZ8794_GLOBAL3] not correct\r\n"); }
 	if (!checkKSZreg(SPI_KSZ8794_GLOBAL4, 0x00))		{ xprintf("[SPI_KSZ8794_GLOBAL4] not correct\r\n"); }
 	if (!checkKSZreg(SPI_KSZ8794_GLOBAL5, 0x4A))		{ xprintf("[SPI_KSZ8794_GLOBAL5] not correct\r\n"); }
@@ -207,7 +202,14 @@ void switch_configure(void)
 	if (!checkKSZreg(SPI_KSZ8794_PORT3CONTROL1, 0x1F))	{ xprintf("[SPI_KSZ8794_PORT3CONTROL1] not correct\r\n"); }
 	if (!checkKSZreg(SPI_KSZ8794_PORT4CONTROL1, 0x1F))	{ xprintf("[SPI_KSZ8794_PORT4CONTROL1] not correct\r\n"); }
 	if (!checkKSZreg(SPI_KSZ8794_PORT1CONTROL2, 0x06))	{ xprintf("[SPI_KSZ8794_PORT1CONTROL2] not correct\r\n"); }
-	if (!checkKSZreg(SPI_KSZ8794_PORT2CONTROL2, 0x06))	{ xprintf("[SPI_KSZ8794_PORT2CONTROL2] not correct\r\n"); }
+	
+	if (((CONFIG *)&settings_buffer)->loop_basestation) {	
+		writeKSZreg(SPI_KSZ8794_PORT2CONTROL2, 0x00);	
+		if (!checkKSZreg(SPI_KSZ8794_PORT2CONTROL2, 0x00))	{ xprintf("[SPI_KSZ8794_PORT2CONTROL2] not correct\r\n"); }
+	} else {
+		writeKSZreg(SPI_KSZ8794_PORT2CONTROL2, 0x06);	
+		if (!checkKSZreg(SPI_KSZ8794_PORT2CONTROL2, 0x06))	{ xprintf("[SPI_KSZ8794_PORT2CONTROL2] not correct\r\n"); }
+	}
 	
 	/* For now, turn off the T-junction port 3 to the Power & Ethernet board attachment */
 	writeKSZreg(SPI_KSZ8794_PORT3CONTROL2, 0x00);
@@ -318,8 +320,8 @@ void address_configure(void)
 	uip_ipaddr(&broadcast, 255, 255, 255, 255);
 	uip_sethostaddr(&ipaddr);
 	uip_setnetmask(&netmask);
-	uip_setnetmask(&gwaddr);
-	
+	uip_setdraddr(&gwaddr);
+
 	xprintf("MultiSense [init MAC/IP values] %x:%x:%x:%x:%x:%x %d.%d.%d.%d\r\n", mac_raw[0], mac_raw[1], mac_raw[2], mac_raw[3], mac_raw[4], mac_raw[5], uip_ipaddr1(ipaddr), uip_ipaddr2(ipaddr), uip_ipaddr3(ipaddr), uip_ipaddr4(ipaddr));
 	
 	/* Create and bind the main UDP socket for the MultiSense board */
@@ -459,7 +461,6 @@ void var_init(void)
 	tick_counter = 0;
 	readenvironment = 0;
 	arp_check = 0;
-	ip_periodic_check = 0;
 	ring_timer = 0;
 	ring = 0;
 
@@ -499,6 +500,8 @@ void var_init(void)
 	miniIO_B0_adcL = 0;
 	miniIO_B_relay = 0;
 	miniIO_B_inputs = 0;
+	
+	temp_failure_flag = 0;
 	
 	/* Set the enumerated type variables such as the daughter card types and the network loop ring-topology management state */
 	cardA_type = CARD_NOTFITTED;

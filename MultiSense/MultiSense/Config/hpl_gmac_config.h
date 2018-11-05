@@ -19,7 +19,7 @@
 // <i> Enable the Management port
 // <id> gmac_arch_ncr_mpe
 #ifndef CONF_GMAC_NCR_MPE
-#define CONF_GMAC_NCR_MPE 1
+#define CONF_GMAC_NCR_MPE 0
 #endif
 
 // <q> Enable write for Static Register
@@ -151,7 +151,7 @@
 // <i> field less than 0x0600.
 // <id> gmac_arch_ncfgr_lferd
 #ifndef CONF_GMAC_NCFGR_LFERD
-#define CONF_GMAC_NCFGR_LFERD 1
+#define CONF_GMAC_NCFGR_LFERD 0
 #endif
 
 // <q> Remove FCS

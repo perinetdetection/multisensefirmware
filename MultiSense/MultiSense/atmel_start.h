@@ -141,7 +141,7 @@ extern "C" {
 #define	REG_SPI_WRITE				0x00
 
 #define SETTING_STRUCTURE_SIZE		128
-#define SAMPLE_BUFFER_SIZE			684
+#define SAMPLE_BUFFER_SIZE			1024
 
 #define ADC_CH0						0
 #define ADC_CH1						1

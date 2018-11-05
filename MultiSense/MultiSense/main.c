@@ -34,7 +34,7 @@
 //#define USE_ENCRYPTION
 
 #define	MULTISENSE_FIRMWARE_MAJOR	0
-#define	MULTISENSE_FIRMWARE_MINOR	1
+#define	MULTISENSE_FIRMWARE_MINOR	2
 
 #define DMA_CHANNEL_0				0
 #define SEQ_LENGTH					10
@@ -74,7 +74,7 @@ extern void							read_boardvalues(void);
 struct timer_task					TIMER_0_task1;
 
 unsigned int						tick_counter;
-unsigned char						readenvironment, arp_check, ip_periodic_check, sentA, sentB, refresh_gain;
+unsigned char						readenvironment, arp_check, sentA, sentB, refresh_gain;
 unsigned char						send_relearn_udp;
 unsigned char						ring_timer;
 unsigned char		 				stormstate;
@@ -89,13 +89,13 @@ unsigned char						cardBch0_samplebuffer[SAMPLE_BUFFER_SIZE];
 unsigned char						cardBch1_samplebuffer[SAMPLE_BUFFER_SIZE];
 unsigned char						cardBch2_samplebuffer;
 unsigned char						cardBch3_samplebuffer;
-unsigned int						card_sampleindex, looprate, loopcount;
+unsigned int						card_sampleindex, looprate, loopcount, uptime;
 
 unsigned char						settings_buffer[SETTING_STRUCTURE_SIZE], readdata_tempmoisture[4], readdata_water1, readdata_water2, highvoltage, command_dataw[2], command_datar[2];
 unsigned char						tamper, cardA_present, cardB_present, cardA_old, cardB_old, link_port1, link_port2, link_port3, ring_broken, miniA_chan, miniB_chan;
 unsigned char						miniIO_A1_adcH, miniIO_A1_adcL, miniIO_A0_adcH, miniIO_A0_adcL, miniIO_A_relay, miniIO_A_inputs;
 unsigned char						miniIO_B1_adcH, miniIO_B1_adcL, miniIO_B0_adcH, miniIO_B0_adcL, miniIO_B_relay, miniIO_B_inputs;
-unsigned char						old_tamper, old_link_port1, old_link_port2, old_link_port3;
+unsigned char						old_tamper, old_link_port1, old_link_port2, old_link_port3, temp_failure_flag;
 CARD_TYPE							cardA_type, cardB_type;
 struct uip_eth_addr					macaddress;
 uint8_t								mac_raw[6];
@@ -156,9 +156,6 @@ void TIMER_0_task1_cb(const struct timer_task *const timer_task)
 	    wdt_feed(&WDT_0);
 	}
 
-	/* Every 1/10th of a second, poll theuIP stack as part of the pre-requisite requirement for the stack */
-	ip_periodic_check = 1;
-
 	/* Every 2.5 seconds, call the ARP-timer check in the uIP stack */
 	if (!(tick_counter % 25)) {
 		arp_check = 1;
@@ -173,6 +170,10 @@ void TIMER_0_task1_cb(const struct timer_task *const timer_task)
 	if (!(tick_counter % 10)) {
 		looprate = loopcount;
 		loopcount = 0;
+		
+		if (uptime < 1000000) {
+			uptime++;
+		}
 	}
 	
 	/* If tamper switch is closed and the enclosure lid is correct, then the LEDs do not illuminate. Else show the ETH and PWR LEDs according to the system state */
@@ -319,17 +320,8 @@ void application_udp_appcall(void)
 			/* If we are a pass-through device and not configured as a base-station, then be ready to receive a FLUSH MAC table packet */
 			if (!(((CONFIG *)&settings_buffer)->loop_basestation)) {
 				/* UDP FLUSH packet arrived, so start the SPI register write process of flushing the MAc tables in the Ethernet SWITCH IC */
-				writeKSZreg(SPI_KSZ8794_PORT1CONTROL2, 0x07);
-				writeKSZreg(SPI_KSZ8794_PORT2CONTROL2, 0x07);
-
 				/* Clear the learning tables in the SWITCH */
-				writeKSZreg(SPI_KSZ8794_GLOBAL0, 0x6D);
-				delay_us(250);
-
-				/* Once cleared, turn off learnign state for ports 1 and 2 */
-				writeKSZreg(SPI_KSZ8794_PORT1CONTROL2, 0x06);
-				writeKSZreg(SPI_KSZ8794_PORT2CONTROL2, 0x06);
-
+				writeKSZreg(SPI_KSZ8794_GLOBAL0, 0x2C);
 				xprintf("Broadcast Table [FLUSH] UDP packet arrived...\r\n");
 			}
 		}
@@ -368,17 +360,20 @@ void application_udp_appcall(void)
 				PLAINTEXT[57] = ID_IDENT_2;
 				PLAINTEXT[58] = ID_IDENT_3;
 				PLAINTEXT[59] = ID_IDENT_4;
-				PLAINTEXT[60] = 0;
+				PLAINTEXT[60] = (unsigned char)((uptime >> 24) && 0xFF);
+				PLAINTEXT[61] = (unsigned char)((uptime >> 16) && 0xFF);
+				PLAINTEXT[62] = (unsigned char)((uptime >> 8) && 0xFF);
+				PLAINTEXT[63] = (unsigned char)((uptime >> 0) && 0xFF);
 
 				/* Once the PLAINTEXT data buffer has been filled out with the live information...*/
 #ifdef USE_ENCRYPTION
 				memmove(iv, aes_key, 16);
-				aes_sync_cbc_crypt(&CRYPTOGRAPHY_0, AES_ENCRYPT, PLAINTEXT, CIPHERTEXT, 61, &iv[0]);	    // Use AES 128-bit encryption algorithm
+				aes_sync_cbc_crypt(&CRYPTOGRAPHY_0, AES_ENCRYPT, PLAINTEXT, CIPHERTEXT, 64, &iv[0]);	    // Use AES 128-bit encryption algorithm
 #else
-				memmove(CIPHERTEXT, PLAINTEXT, 61);														// If no encryption compiled, then just copy over plain-text into [UDP] buffer
+				memmove(CIPHERTEXT, PLAINTEXT, 64);															// If no encryption compiled, then just copy over plain-text into [UDP] buffer
 #endif
 				/* Send the actual main board UDP packet to the CPU-Server */
-				uip_udp_send(61);
+				uip_udp_send(64);
 
 				/* Clear the flag that indicated we had live data to send */
 				readenvironment = 0;
@@ -535,7 +530,7 @@ void application_udp_appcall(void)
 			}
 		} else if (uip_conn->lport == htons(RING_MANAGEMENT_SOCKET)) {
 			/* If this poll event is for the BPDU ring network topology channel then... */
-			if ((send_relearn_udp) && (((CONFIG *)&settings_buffer)->loop_basestation)) {
+			if ((send_relearn_udp) && (((CONFIG *)&settings_buffer)->loop_basestation) && (!stormstate)) {
 				/* If we are configured as a base-station and a FLUSH MAC packet is ready to be sent out then... */
 				PLAINTEXT[0] = 0;
 				/* Once the PLAINTEXT data buffer has been filled out with a dummy byte then...*/
@@ -547,6 +542,41 @@ void application_udp_appcall(void)
 				send_relearn_udp = 0;
 				xprintf("Topology update packet send...\r\n");
 			}
+		}
+	}
+}
+
+// *****************************************************************************************************************************************************************
+// Function:    udp_stack_check(void)
+// . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+// Description: checks the UDP sockets and the ARP/RARP periodic states
+// Returns:     Nothing
+// *****************************************************************************************************************************************************************
+static void udp_stack_check(void)
+{
+	int		loop;
+		
+	/* Check all sockets */
+	for (loop = 0; loop < UIP_UDP_CONNS; loop++) {
+		uip_periodic(loop);
+
+		/* Any resultant outbound packets, send out now */
+		if (uip_len > 0) {
+			uip_arp_out();
+						
+			mac_async_write(&ETHERNET_MAC_0, (uint8_t *)&uip_buf[0], uip_len);	
+		}
+	}
+
+	/* Check all UDP connection sockets */
+	for (loop = 0; loop < UIP_UDP_CONNS; loop++) {
+		uip_udp_periodic(loop);
+
+		/* Any resultant outbound packets, send out now */
+		if (uip_len > 0) {
+			uip_arp_out();
+						
+	 	    mac_async_write(&ETHERNET_MAC_0, (uint8_t *)&uip_buf[0], uip_len);
 		}
 	}
 }
@@ -566,22 +596,23 @@ int main_loop(void)
 
 	/* Zero-off and initialize the local variables here */
 	bpdu_arrived = 0;
+	uptime = 0;
 	broadcast_storm = 0;
 	eth_check = 0;
 	key_check = 0;
 	command_dataw[1] = 0x00;
 	command_dataw[2] = 0x00;
+	
+	read_boardvalues();
 
 	/* This is the forever loop that is the "main-loop" of the whole firmware in MultiSense */
 	while (1) {
-		/* reset the flag that indicates that a BPDU has arrived */
-		bpdu_arrived = 0;
 		loopcount++;
 
-		/* Only every 1000 loops do we check for incoming network frames */
-		if (eth_check == 1000) {
-			/* Be prepared to burst read up to 5 frames this check */
-			for (etherloop = 0; etherloop < 5; etherloop++) {
+		/* Only every 500 loops do we check for incoming network frames */
+		if (eth_check == 500) {
+			/* Be prepared to burst read up to 16 frames this check */
+			for (etherloop = 0; etherloop < 16; etherloop++) {
 				/* What is the length of the next incoming Ethernet frame? */
 				if (mac_async_read_len(&ETHERNET_MAC_0) > 0) {
 					/* If none-zero, then there is another packet to be read, and go ahead and read it from the MAC */
@@ -592,16 +623,20 @@ int main_loop(void)
 				}
 
 				/* If incoming frame is a BPDU with the correct identifiers etc then... */
-				if ((uip_len == 72) && (uip_buf[0] == 0x01) && (uip_buf[1] == 0x80) && (uip_buf[2] == 0xC2) && (uip_buf[3] == 0x00) && (uip_buf[4] == 0x00) && (uip_buf[5] == 0x00) && (uip_buf[6] == 0x01) &&
-				(uip_buf[7] == 0x80) && (uip_buf[8] == 0xC2) && (uip_buf[9] == 0x00) && (uip_buf[10] == 0x00) && (uip_buf[11] == 0x01) && (*((unsigned short int *)&(uip_buf[12])) == 0x01E0) &&
-				(uip_buf[29] == mac_raw[0]) && (uip_buf[30] == mac_raw[1]) && (uip_buf[31] == mac_raw[2]) && (uip_buf[32] == mac_raw[3]) && (uip_buf[33] == mac_raw[4]) && (uip_buf[34] == mac_raw[5])) {
+				if ((uip_buf[0] == 0x01) && (uip_buf[1] == 0x80) && (uip_buf[2] == 0xC2) && (uip_buf[3] == 0x00) && (uip_buf[4] == 0x00) && (uip_buf[5] == 0x00) && (*((unsigned short int *)&(uip_buf[12])) == 0x01E0) &&
+				    (uip_buf[29] == mac_raw[0]) && (uip_buf[30] == mac_raw[1]) && (uip_buf[31] == mac_raw[2]) && (uip_buf[32] == mac_raw[3]) && (uip_buf[33] == mac_raw[4]) && (uip_buf[34] == mac_raw[5])) {
 					/* We have received a BPDU frame */
-					bpdu_arrived = 1;
-					xprintf("BPDU = 1\r\n");
+					if (((CONFIG *)&settings_buffer)->loop_basestation) {
+						bpdu_arrived = 1;	
+					}
+					
+					break;
 				} else {
 					/* Normal frame arrived */
 					if (ETH_BUF->type == htons(UIP_ETHTYPE_IP)) {
 						/* Frame is an Ethernet type */
+						xprintf("reading IN <--- %d %x,%x,%x,%x,%x,%x %x,%x,%x,%x,%x,%x %x,%x\r\n", uip_len, uip_buf[0], uip_buf[1], uip_buf[2], uip_buf[3], uip_buf[4], uip_buf[5], uip_buf[6], uip_buf[7], uip_buf[8], uip_buf[9], uip_buf[10], uip_buf[11], uip_buf[12], uip_buf[13]);
+						
 						uip_arp_ipin();
 						uip_input();
 						/* Process incoming frame in the uIP stack */
@@ -609,9 +644,11 @@ int main_loop(void)
 						if (uip_len > 0) {
 							/* If there is resultant output data to be sent then send it now after an ARP look-up first */
 							uip_arp_out();
+								
 							mac_async_write(&ETHERNET_MAC_0, (uint8_t *)&uip_buf[0], uip_len);
+							xprintf("writing OUT ---> %d %x,%x,%x,%x,%x,%x %x,%x,%x,%x,%x,%x %x,%x\r\n", uip_len, uip_buf[0], uip_buf[1], uip_buf[2], uip_buf[3], uip_buf[4], uip_buf[5], uip_buf[6], uip_buf[7], uip_buf[8], uip_buf[9], uip_buf[10], uip_buf[11], uip_buf[12], uip_buf[13]);
 						}
-					} else if (ETH_BUF->type == htons (UIP_ETHTYPE_ARP)) {
+					} else if (ETH_BUF->type == htons(UIP_ETHTYPE_ARP)) {
 						/* If the incoming frame is an ARP packet */
 						uip_arp_arpin();
 
@@ -623,13 +660,17 @@ int main_loop(void)
 				}
 			}
 
-			/* If there is more than 5 consecutive incoming packets read out, then we declare that we are in a broadcast storm state */
-			if (etherloop == 5) {
+			/* If there is more than 16 consecutive incoming packets read out, then we declare that we are in a broadcast storm state */
+			if (etherloop == 16) {
 				if (!broadcast_storm) {
 					xprintf("ETHERNET: [broadcast storm] !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\r\n");
-
-					/* Disable Port 4 Management port but crucially keep transmitting/receiving BPDUs */
-					writeKSZreg(SPI_KSZ8794_PORT4CONTROL2, 0x00);
+					
+					if (((CONFIG *)&settings_buffer)->loop_basestation) {
+						/* Disable Port 2 Management port but crucially keep transmitting/receiving BPDUs */
+						writeKSZreg(SPI_KSZ8794_PORT2CONTROL2, 0x00);
+						xprintf("ETHERNET: Shutting [OFF] flow...\r\n");
+					}
+						
 					stormstate = 1;
 					broadcast_storm = 1;
 					
@@ -645,43 +686,16 @@ int main_loop(void)
 				broadcast_storm = 0;
 			}
 
-			/* Every 10 times per second, poll theuIP stack */
-			if (ip_periodic_check) {
-				ip_periodic_check = 0;
-
-				/* Check all sockets */
-				for (loop = 0; loop < UIP_UDP_CONNS; loop++) {
-					uip_periodic(loop);
-
-					/* Any resultant outbound packets, send out now */
-					if (uip_len > 0) {
-						uip_arp_out();
-						mac_async_write(&ETHERNET_MAC_0, (uint8_t *)&uip_buf[0], uip_len);
-					}
-				}
-
-				/* Check all UDP connection sockets */
-				for (loop = 0; loop < UIP_UDP_CONNS; loop++) {
-					uip_udp_periodic(loop);
-
-					/* Any resultant outbound packets, send out now */
-					if (uip_len > 0) {
-						uip_arp_out();
-						mac_async_write(&ETHERNET_MAC_0, (uint8_t *)&uip_buf[0], uip_len);
-					}
-				}
-			}
-
-			/* Every 2.5 seconds check the ARP state-machine */
-			if (arp_check) {
-				arp_check = 0;
-
-				uip_arp_timer();
-			}
-
 			eth_check = 0;
 		} else {
 			eth_check++;
+		}
+		
+		/* Every 2.5 seconds check the ARP state-machine */
+		if (arp_check) {
+			arp_check = 0;
+
+			uip_arp_timer();
 		}
 
 		/* If the configuration settings have bee changed, then update the gain ADC settings on the VibraTek cards if they are installed... */
@@ -893,11 +907,13 @@ int main_loop(void)
 			if ((card_sampleindex == SAMPLE_BUFFER_SIZE) && (readenvironment == 1)) {
 				readenvironment = 2;
 				read_boardvalues();
+				udp_stack_check();
 			}
 		} else if (readenvironment == 1) {
 			/* If we just want to indicate that the board live values need to be read...*/
 			readenvironment = 2;
 			read_boardvalues();
+			udp_stack_check();
 		}
 
 		/* Every 0.5 seconds, we need to check BPDU packets and ring topology state-machines... */
@@ -907,6 +923,9 @@ int main_loop(void)
 				/* If we need to send a UDP FLUSH MAC table packet, then set this flag */
 				send_relearn_udp = 1;
 			}
+			
+			/* reset the flag that indicates that a BPDU has arrived */
+			bpdu_arrived = 0;
 
 			/* De-assert timer flag */
 			ring_timer = 0;
@@ -987,6 +1006,7 @@ int main_loop(void)
 				
 				xprintf("\r\r\rRebooting...\r\n");
 				delay_ms(250);
+				
 				_reset_mcu();
 				break;
 
@@ -1008,6 +1028,7 @@ int main_loop(void)
 				
 				xprintf("\r\r\rRebooting...\r\n");
 				delay_ms(250);
+				
 				_reset_mcu();
 				break;
 
@@ -1029,6 +1050,7 @@ int main_loop(void)
 				
 				xprintf("\r\r\rRebooting...\r\n");
 				delay_ms(250);
+				
 				_reset_mcu();
 				break;
 
@@ -1089,7 +1111,9 @@ int main_loop(void)
 				xprintf("\r\r\r\r\r\n");
 				xprintf("<CLI DEBUG> Ring Topology    = %s", (ring_broken == RING_BROKEN) ? "BROKEN" : (ring_broken == RING_CLOSED) ? "LOOP" : "N/A");
 				xprintf("\r\r\r\r\r\n");
-				xprintf("<CLI DEBUG> Firmware         = %d.%d", MULTISENSE_FIRMWARE_MAJOR, MULTISENSE_FIRMWARE_MINOR);
+				xprintf("<CLI DEBUG> Uptime           = %d seconds", uptime);
+				xprintf("\r\r\r\r\r\n");
+				xprintf("<CLI DEBUG> Firmware         = V%d.%d", MULTISENSE_FIRMWARE_MAJOR, MULTISENSE_FIRMWARE_MINOR);
 				xprintf("\r\n");
 				xprintf(". . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .\r\n\r\n");
 				break;
@@ -1315,12 +1339,12 @@ int main(void)
 
 	/* Set the board MAC and IP address along with the network schemes */
 	address_configure();
-	
+		
 	if (((CONFIG *)&settings_buffer)->ID > 0x00000000) {
 		/* Initialize the ring loop topology function */
 		ring_init((unsigned char)(((CONFIG *)&settings_buffer)->loop_basestation), (unsigned char *)&mac_raw);
 	} else {
-		xprintf("********************************************************************************************\r\n");
+		xprintf("\r\n\r\n********************************************************************************************\r\n");
 		xprintf("* THE MULTI-SENSE DEVICE [ID] HAS NOT BEEN SET. THIS DEFICE WILL NOT FUNCTION OR RUN AS    *\r\n");
 		xprintf("* NORMAL UNTIL THE [ID] NUMBER HAS BEEN ENTERED BY THIS TERMINAL FACILITY.                 *\r\n");
 		xprintf("* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  *\r\n");
@@ -1400,6 +1424,7 @@ int main(void)
 									
 						xprintf("\r\n\r\r\rRebooting...(please wait)\r\n\r\n");
 						delay_ms(250);
+						
 					   _reset_mcu();
 					} else if (((unsigned char)ch == 'n') || ((unsigned char)ch == 'N')) {
 						break;
